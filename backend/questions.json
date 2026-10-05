@@ -1,0 +1,55 @@
+{
+  "sections": [
+    {
+      "title": "Demographic profile",
+      "questions": [
+        {"id": "q1", "text": "What's their real name?", "type": "short"},
+        {"id": "q2", "text": "Do they have a nickname or what do you call them?", "type": "short"},
+        {"id": "q3", "text": "What's an endearment they use for you?", "hint": "e.g. \"love\", \"babe\", \"sis\"", "type": "short"},
+        {"id": "q4", "text": "How old are they (or age range)?", "type": "short"},
+        {"id": "q5", "text": "One-line description of who they are to you?", "type": "short"}
+      ]
+    },
+    {
+      "title": "Personality & mindset",
+      "questions": [
+        {"id": "q6", "text": "How would you describe their personality in 3 words?", "type": "short"},
+        {"id": "q7", "text": "What do they care about the most?", "type": "short"},
+        {"id": "q8", "text": "Are they more logical or emotional when making decisions?", "type": "short"},
+        {"id": "q9", "text": "What's something they're usually thinking about or worried about?", "type": "short"},
+        {"id": "q10", "text": "How do they typically react to situations in general?", "type": "short"}
+      ]
+    },
+    {
+      "title": "Communication style",
+      "questions": [
+        {"id": "q11", "text": "Do they text short messages or long paragraphs?", "type": "short"},
+        {"id": "q12", "text": "Do they use lots of emojis, slang, or formal language?", "type": "short"},
+        {"id": "q13", "text": "What's a phrase they say all the time?", "type": "short"},
+        {"id": "q14", "text": "What kind of humor do they use?", "hint": "sarcasm, puns, dark humor, etc.", "type": "short"},
+        {"id": "q15", "text": "How do they usually respond to people?", "hint": "formal, casual, playful, blunt", "type": "short"}
+      ]
+    },
+    {
+      "title": "Relationship dynamics",
+      "questions": [
+        {"id": "q16", "text": "How do they show they care about you?", "type": "short"},
+        {"id": "q17", "text": "Do they have any funny habits or quirks when talking?", "type": "short"},
+        {"id": "q18", "text": "What's an inside joke between you two?", "type": "short"}
+      ]
+    },
+    {
+      "title": "Deeper context",
+      "questions": [
+        {"id": "q19", "text": "What's something most people don't know about them?", "type": "short"},
+        {"id": "q20", "text": "What's one thing you hope people remember about them?", "type": "short"}
+      ]
+    },
+    {
+      "title": "One last thing",
+      "questions": [
+        {"id": "q21", "text": "Anything else you want us to know about them so the agent mimics them perfectly?", "hint": "Share memories, stories, mannerisms, or anything that captures their essence.", "type": "long"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,375 @@
+"""main.py - the web API (FastAPI).
+
+Run from the project root:   uvicorn backend.main:app --reload
+Interactive docs:            http://localhost:8000/docs
+"""
+import json
+import shutil
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from PIL import Image
+from pydantic import BaseModel
+
+from . import engine, ocr, parser, style as style_mod
+from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
+
+ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIST = ROOT / "frontend" / "dist"
+ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    init_db()
+    yield
+
+
+app = FastAPI(title="imy", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"], allow_headers=["*"],
+)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+# ---------------------------------------------------------------- helpers
+def _person_row(conn, pid: int):
+    row = conn.execute("SELECT * FROM persons WHERE id = ?", (pid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Person not found")
+    return row
+
+
+def _person_dict(row) -> dict:
+    return {**dict(row), "answers": json.loads(row["answers"]), "use_llm": bool(row["use_llm"])}
+
+
+def _person_summary(conn, row) -> dict:
+    p = _person_dict(row)
+    pid = p["id"]
+    one = lambda sql: conn.execute(sql, (pid,)).fetchone()[0]
+    return {
+        "id": pid, "name": p["name"], "nickname": p["answers"].get("q2", ""),
+        "answers": p["answers"], "use_llm": p["use_llm"],
+        "created_at": p["created_at"], "updated_at": p["updated_at"],
+        "screenshot_count": one("SELECT COUNT(*) FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL"),
+        "message_count": one("SELECT COUNT(*) FROM messages WHERE person_id = ?"),
+        "person_message_count": one("SELECT COUNT(*) FROM messages WHERE person_id = ? AND speaker = 'person'"),
+    }
+
+
+def _name_from_answers(answers: dict) -> str:
+    return (answers.get("q1") or answers.get("q2") or "Unnamed").strip() or "Unnamed"
+
+
+def _known_names(answers: dict) -> list[str]:
+    names = [answers.get("q1", ""), answers.get("q2", "")]
+    names += [n.split()[0] for n in names if n.strip()]
+    return [n for n in names if n.strip()]
+
+
+def _messages_for_engine(conn, pid: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT m.* FROM messages m JOIN screenshots s ON s.id = m.screenshot_id "
+        "WHERE m.person_id = ? ORDER BY s.id, m.position", (pid,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _store_messages(conn, pid: int, shot_id: int, msgs: list[dict]) -> None:
+    conn.executemany(
+        "INSERT INTO messages (person_id, screenshot_id, position, speaker, text) VALUES (?,?,?,?,?)",
+        [(pid, shot_id, i, m["speaker"], m["text"]) for i, m in enumerate(msgs)])
+
+
+def _shot_out(conn, shot) -> dict:
+    msgs = conn.execute("SELECT id, position, speaker, text FROM messages WHERE screenshot_id = ? ORDER BY position",
+                        (shot["id"],)).fetchall()
+    return {
+        "id": shot["id"], "filename": shot["filename"], "platform": shot["platform"],
+        "flipped": bool(shot["flipped"]),
+        "url": f"/uploads/{shot['stored_path']}" if shot["stored_path"] else None,
+        "messages": [dict(m) for m in msgs],
+    }
+
+
+# ---------------------------------------------------------------- questions
+@app.get("/api/questions")
+def get_questions():
+    return json.loads((Path(__file__).parent / "questions.json").read_text())
+
+
+# ---------------------------------------------------------------- persons
+class AnswersIn(BaseModel):
+    answers: dict[str, str] = {}
+
+
+@app.get("/api/persons")
+def list_persons():
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM persons ORDER BY updated_at DESC").fetchall()
+        return [_person_summary(conn, r) for r in rows]
+
+
+@app.post("/api/persons")
+def create_person(body: AnswersIn):
+    with db() as conn:
+        ts = now()
+        cur = conn.execute(
+            "INSERT INTO persons (name, answers, created_at, updated_at) VALUES (?,?,?,?)",
+            (_name_from_answers(body.answers), json.dumps(body.answers), ts, ts))
+        return _person_summary(conn, _person_row(conn, cur.lastrowid))
+
+
+@app.get("/api/persons/{pid}")
+def get_person(pid: int):
+    with db() as conn:
+        return _person_summary(conn, _person_row(conn, pid))
+
+
+@app.put("/api/persons/{pid}")
+def update_person(pid: int, body: AnswersIn):
+    with db() as conn:
+        _person_row(conn, pid)
+        conn.execute("UPDATE persons SET name = ?, answers = ? WHERE id = ?",
+                     (_name_from_answers(body.answers), json.dumps(body.answers), pid))
+        bump_version(conn, pid)
+        return _person_summary(conn, _person_row(conn, pid))
+
+
+class SettingsIn(BaseModel):
+    use_llm: bool
+
+
+@app.put("/api/persons/{pid}/settings")
+def update_settings(pid: int, body: SettingsIn):
+    with db() as conn:
+        _person_row(conn, pid)
+        conn.execute("UPDATE persons SET use_llm = ? WHERE id = ?", (int(body.use_llm), pid))
+        return _person_summary(conn, _person_row(conn, pid))
+
+
+@app.delete("/api/persons/{pid}")
+def delete_person(pid: int):
+    with db() as conn:
+        _person_row(conn, pid)
+        conn.execute("DELETE FROM persons WHERE id = ?", (pid,))
+    shutil.rmtree(UPLOAD_DIR / str(pid), ignore_errors=True)
+    engine.forget(pid)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- screenshots
+@app.post("/api/persons/{pid}/screenshots")
+def upload_screenshots(pid: int, files: list[UploadFile] = File(...)):
+    """OCR each image, work out who said what, store everything."""
+    results = []
+    with db() as conn:
+        person = _person_dict(_person_row(conn, pid))
+        names = _known_names(person["answers"])
+        folder = UPLOAD_DIR / str(pid)
+        folder.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            ext = Path(f.filename or "").suffix.lower()
+            if ext not in ALLOWED_EXT:
+                raise HTTPException(400, f"{f.filename}: unsupported file type (use PNG, JPG or WEBP).")
+            dest = folder / f"{uuid.uuid4().hex}{ext}"
+            with dest.open("wb") as out:
+                shutil.copyfileobj(f.file, out)
+            try:
+                img = Image.open(dest)
+                img.load()
+            except Exception:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(400, f"{f.filename}: couldn't read this image.")
+            try:
+                lines, size, rgb = ocr.extract_lines(img)
+            except ocr.TesseractNotFoundError:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(503, "Tesseract OCR isn't installed or isn't on your PATH. See the README (step 1).")
+            parsed = parser.parse_screenshot(lines, size, rgb, names)
+            cur = conn.execute(
+                "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
+                (pid, f.filename, f"{pid}/{dest.name}", parsed["platform"], parsed["raw_text"], now()))
+            _store_messages(conn, pid, cur.lastrowid, parsed["messages"])
+            shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
+            shot["needs_review"] = parsed["needs_review"]
+            results.append(shot)
+        bump_version(conn, pid)
+    return results
+
+
+class TextImportIn(BaseModel):
+    text: str
+    person_name: str = ""
+
+
+@app.post("/api/persons/{pid}/import-text")
+def import_text(pid: int, body: TextImportIn):
+    """Alternative to screenshots: paste a WhatsApp export or 'Name: message' lines.
+    Also the best way to capture emojis, which OCR can't read."""
+    with db() as conn:
+        person = _person_dict(_person_row(conn, pid))
+        names = ([body.person_name] if body.person_name.strip() else []) + _known_names(person["answers"])
+        msgs, needs_review = parser.parse_text_export(body.text, names)
+        if not msgs:
+            raise HTTPException(400, "Couldn't find any messages. Use lines like  Name: message  or a WhatsApp export.")
+        cur = conn.execute(
+            "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "pasted-text", None, "text-import", body.text[:20000], now()))
+        _store_messages(conn, pid, cur.lastrowid, msgs)
+        bump_version(conn, pid)
+        shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
+        shot["needs_review"] = needs_review
+        return shot
+
+
+@app.get("/api/persons/{pid}/screenshots")
+def list_screenshots(pid: int):
+    with db() as conn:
+        _person_row(conn, pid)
+        shots = conn.execute("SELECT * FROM screenshots WHERE person_id = ? ORDER BY id", (pid,)).fetchall()
+        return [_shot_out(conn, s) for s in shots]
+
+
+@app.post("/api/screenshots/{sid}/flip")
+def flip_screenshot(sid: int):
+    """Swap user/person on every message in a screenshot (when the sides were guessed backwards)."""
+    with db() as conn:
+        shot = conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone()
+        if not shot:
+            raise HTTPException(404, "Screenshot not found")
+        conn.execute("UPDATE messages SET speaker = CASE speaker WHEN 'user' THEN 'person' ELSE 'user' END WHERE screenshot_id = ?", (sid,))
+        conn.execute("UPDATE screenshots SET flipped = 1 - flipped WHERE id = ?", (sid,))
+        bump_version(conn, shot["person_id"])
+        return _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone())
+
+
+@app.delete("/api/screenshots/{sid}")
+def delete_screenshot(sid: int):
+    with db() as conn:
+        shot = conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone()
+        if not shot:
+            raise HTTPException(404, "Screenshot not found")
+        conn.execute("DELETE FROM screenshots WHERE id = ?", (sid,))
+        bump_version(conn, shot["person_id"])
+    if shot["stored_path"]:
+        (UPLOAD_DIR / shot["stored_path"]).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- message corrections
+class MessageEdit(BaseModel):
+    text: str | None = None
+    speaker: str | None = None
+
+
+@app.put("/api/messages/{mid}")
+def edit_message(mid: int, body: MessageEdit):
+    with db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "Message not found")
+        if body.speaker is not None and body.speaker not in ("user", "person"):
+            raise HTTPException(400, "speaker must be 'user' or 'person'")
+        conn.execute("UPDATE messages SET text = ?, speaker = ? WHERE id = ?",
+                     (body.text if body.text is not None else m["text"],
+                      body.speaker or m["speaker"], mid))
+        bump_version(conn, m["person_id"])
+        return dict(conn.execute("SELECT id, position, speaker, text FROM messages WHERE id = ?", (mid,)).fetchone())
+
+
+@app.delete("/api/messages/{mid}")
+def delete_message(mid: int):
+    with db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "Message not found")
+        conn.execute("DELETE FROM messages WHERE id = ?", (mid,))
+        bump_version(conn, m["person_id"])
+    return {"ok": True}
+
+
+@app.post("/api/messages/{mid}/merge-up")
+def merge_message_up(mid: int):
+    """Glue this message onto the one before it (when one bubble was split in two)."""
+    with db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "Message not found")
+        prev = conn.execute("SELECT * FROM messages WHERE screenshot_id = ? AND position < ? ORDER BY position DESC LIMIT 1",
+                            (m["screenshot_id"], m["position"])).fetchone()
+        if not prev:
+            raise HTTPException(400, "There's no message above this one.")
+        conn.execute("UPDATE messages SET text = ? WHERE id = ?", (prev["text"] + " " + m["text"], prev["id"]))
+        conn.execute("DELETE FROM messages WHERE id = ?", (mid,))
+        bump_version(conn, m["person_id"])
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- chat
+class ChatIn(BaseModel):
+    message: str
+
+
+@app.get("/api/persons/{pid}/chat")
+def get_chat(pid: int):
+    with db() as conn:
+        _person_row(conn, pid)
+        rows = conn.execute("SELECT id, role, text, debug, created_at FROM chat_messages WHERE person_id = ? ORDER BY id", (pid,)).fetchall()
+        return [{**dict(r), "debug": json.loads(r["debug"]) if r["debug"] else None} for r in rows]
+
+
+@app.post("/api/persons/{pid}/chat")
+def send_chat(pid: int, body: ChatIn):
+    text = body.message.strip()
+    if not text:
+        raise HTTPException(400, "Message is empty.")
+    with db() as conn:
+        person = _person_dict(_person_row(conn, pid))
+        history = [dict(r) for r in conn.execute(
+            "SELECT role, text FROM chat_messages WHERE person_id = ? ORDER BY id DESC LIMIT 16", (pid,)).fetchall()][::-1]
+        conn.execute("INSERT INTO chat_messages (person_id, role, text, created_at) VALUES (?,?,?,?)", (pid, "user", text, now()))
+        reply = engine.generate_reply(person, _messages_for_engine(conn, pid), history, text)
+        debug = json.dumps(reply.debug())
+        out = []
+        for i, bubble in enumerate(reply.bubbles):
+            cur = conn.execute("INSERT INTO chat_messages (person_id, role, text, debug, created_at) VALUES (?,?,?,?,?)",
+                               (pid, "person", bubble, debug if i == len(reply.bubbles) - 1 else None, now()))
+            out.append({"id": cur.lastrowid, "role": "person", "text": bubble,
+                        "debug": reply.debug() if i == len(reply.bubbles) - 1 else None})
+        return {"bubbles": out}
+
+
+@app.delete("/api/persons/{pid}/chat")
+def clear_chat(pid: int):
+    with db() as conn:
+        _person_row(conn, pid)
+        conn.execute("DELETE FROM chat_messages WHERE person_id = ?", (pid,))
+    return {"ok": True}
+
+
+@app.get("/api/persons/{pid}/style")
+def get_style(pid: int):
+    with db() as conn:
+        person = _person_dict(_person_row(conn, pid))
+        index = engine.get_index(person, _messages_for_engine(conn, pid))
+        return {"lines": style_mod.describe_style(index.style), "embedder": index.space.kind,
+                "exchanges": len(index.prompts), "messages": index.style["n_messages"]}
+
+
+# ---------------------------------------------------------------- serve the built frontend (optional)
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}")
+    def spa(path: str):
+        target = FRONTEND_DIST / path
+        return FileResponse(target if path and target.is_file() else FRONTEND_DIST / "index.html")

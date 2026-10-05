@@ -1,0 +1,12 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pillow>=10.0
+numpy>=1.26
+scikit-learn>=1.4
+pytesseract>=0.3.10
+# Better semantic matching. Optional: if it isn't installed (or can't download its
+# model), imy automatically falls back to TF-IDF. First run downloads ~90 MB.
+sentence-transformers>=2.7
+pytest>=8.0
+scipy>=1.11
