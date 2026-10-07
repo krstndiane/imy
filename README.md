@@ -68,6 +68,10 @@ pytest backend/tests -q
 
 6. **Optional Claude mode** (`backend/claude.py`): put `ANTHROPIC_API_KEY=sk-ant-...` in a `.env` file in the project root (or set it in your shell) and restart. Claude then reads screenshots directly (platform, who said what, emojis included) instead of Tesseract, and writes replies in the person's voice from the interview answers, style summary and full parsed chat history. If a call fails, imy falls back to the steps above. Costs money per use, and **your screenshots, messages and answers are sent to Anthropic**. Set `IMY_CLAUDE=0` to switch it off without removing the key; `IMY_CLAUDE_MODEL` changes the model.
 
+7. **Free AI mode** (`backend/llm.py`): put a free `GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)) or `GROQ_API_KEY` ([get one](https://console.groq.com/keys)) in `.env` and restart. An AI model then writes each reply in context, in the person's style. imy picks an available model by itself (`IMY_LLM_MODEL` overrides it; `IMY_LLM=0` switches it off). Screenshots are still read locally. **Your messages, answers and parsed chats are sent to that provider.** If the call fails or the free limit is hit, imy falls back to the offline replies.
+
+Without any key, replies come from `backend/smalltalk.py` (topic rules) and `backend/personality.py`; the screenshots are used only to learn the person's style, never as a script (`IMY_REUSE_LINES=1` brings back the old answer-with-their-own-lines behaviour described in steps 1-4).
+
 Every reply has a **"why this reply?"** link showing which step produced it.
 
 ## Where to tweak things

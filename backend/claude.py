@@ -241,8 +241,8 @@ def persona_system(name: str, relationship: str, platform: str, facts: str, styl
     )
 
 
-def chat(system: str, history: list[dict], user_text: str, max_bubbles: int) -> list[str]:
-    """history: [{"role": "user"|"person", "text": ...}] oldest first."""
+def build_turns(history: list[dict], user_text: str) -> list[dict]:
+    """[{"role": "user"|"person", "text"}] + the new message -> alternating user/assistant turns."""
     turns: list[dict] = []
     for h in history + [{"role": "user", "text": user_text}]:
         role = "user" if h["role"] == "user" else "assistant"
@@ -250,6 +250,12 @@ def chat(system: str, history: list[dict], user_text: str, max_bubbles: int) -> 
             turns[-1]["content"] += "\n" + h["text"]
         elif turns or role == "user":  # the conversation has to open with the user
             turns.append({"role": role, "content": h["text"]})
+    return turns
+
+
+def chat(system: str, history: list[dict], user_text: str, max_bubbles: int) -> list[str]:
+    """history: [{"role": "user"|"person", "text": ...}] oldest first."""
+    turns = build_turns(history, user_text)
     response = client().beta.messages.create(
         model=MODEL,
         max_tokens=4000,

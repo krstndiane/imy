@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import claude, parser, personality, smalltalk, style as style_mod
+from . import claude, llm, parser, personality, smalltalk, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
@@ -365,15 +365,17 @@ class PersonIndex:
         return Reply(bubbles, "llm", 0.0, None, detect_intent(user_text), note=f"Written by local model {model}.", embedder=self.space.kind)
 
     # ---- optional Claude API (see claude.py)
-    def claude_reply(self, user_text: str, history: list[dict]) -> Reply:
+    def claude_reply(self, user_text: str, history: list[dict], use: str = "claude") -> Reply:
         labels = _question_labels()
         facts = "\n".join(f"- {labels[k]} {v.strip()}" for k, v in self.answers.items() if v and v.strip() and k in labels)
         style = "\n".join("- " + s for s in style_mod.describe_style(self.style))
         system = claude.persona_system(self.name, self.answers.get("q5", ""), self.platform, facts, style,
                                        self.messages, MAX_BUBBLES)
-        bubbles = claude.chat(system, history, user_text, MAX_BUBBLES)
-        return Reply(bubbles, "claude", 0.0, None, detect_intent(user_text),
-                     note=f"Written by Claude ({claude.MODEL}).", embedder=self.space.kind)
+        if use == "claude":
+            bubbles, who = claude.chat(system, history, user_text, MAX_BUBBLES), f"Claude ({claude.MODEL})"
+        else:   # free AI mode, see llm.py
+            bubbles, who = llm.chat(system, history, user_text, MAX_BUBBLES), llm.label()
+        return Reply(bubbles, use, 0.0, None, detect_intent(user_text), note=f"Written by {who}.", embedder=self.space.kind)
 
 
 # ------------------------------------------------------------------ cache + public API
@@ -405,6 +407,12 @@ def generate_reply(person: dict, messages: list[dict], history: list[dict], user
         except Exception as exc:
             print(f"[imy] Claude failed: {exc}")
             note = f"Couldn't get a reply from Claude ({claude.explain(exc)}). Used pattern matching instead."
+    elif llm.enabled():
+        try:
+            return index.claude_reply(user_text, history, use="llm")
+        except Exception as exc:
+            print(f"[imy] AI reply failed: {exc}")
+            note = f"Couldn't get a reply from the AI ({llm.explain(exc)}). Used pattern matching instead."
     elif person.get("use_llm"):
         try:
             return index.llm_reply(user_text, history, rng)

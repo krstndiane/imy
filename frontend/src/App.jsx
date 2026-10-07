@@ -83,7 +83,7 @@ function Welcome({ hasPeople, onNew }) {
           : "Answer a few questions about them and upload screenshots of your chats. imy learns how they write and lets you talk with that style again."}
       </p>
       <button className="btn primary" onClick={onNew}>Create new person</button>
-      <p className="fine">imy copies writing patterns from the messages you give it. It isn’t them, and your chats and screenshots stay on this computer unless you turn on Claude mode.</p>
+      <p className="fine">imy copies writing patterns from the messages you give it. It isn’t them, and your chats and screenshots stay on this computer unless you turn on AI mode.</p>
     </div>
   );
 }
