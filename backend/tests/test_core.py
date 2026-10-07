@@ -81,6 +81,7 @@ def _person():
 
 
 def test_engine_retrieval_and_intent(monkeypatch):
+    monkeypatch.setattr(engine, "REUSE_LINES", True)   # the older answer-with-their-own-lines mode
     monkeypatch.setenv("IMY_EMBEDDER", "tfidf")
     engine.VectorSpace._model, engine.VectorSpace._failed = None, False
     r = engine.generate_reply(_person(), _messages(), [], "what are you eating?")
@@ -89,7 +90,22 @@ def test_engine_retrieval_and_intent(monkeypatch):
     assert r.bubbles and r.source in ("retrieval", "intent")
 
 
+def test_replies_are_written_fresh_not_copied(monkeypatch):
+    """Default mode: screenshots teach style only; replies answer what was said."""
+    monkeypatch.setenv("IMY_EMBEDDER", "tfidf")
+    theirs = {m["text"].lower() for m in _messages() if m["speaker"] == "person"}
+    history = []
+    for said, expect in [("what are you eating?", None), ("how are you", "you"), ("can i tell you something?", None), ("thanks", None)]:
+        r = engine.generate_reply({**_person(), "id": 202}, _messages(), history, said)
+        assert r.source in ("smalltalk", "personality") and r.bubbles[0]
+        assert r.bubbles[0].lower() not in theirs
+        if expect:
+            assert expect in r.bubbles[0].lower()
+        history += [{"role": "user", "text": said}, {"role": "person", "text": r.bubbles[0]}]
+
+
 def test_engine_with_no_screenshots(monkeypatch):
+    monkeypatch.setattr(engine, "REUSE_LINES", True)
     monkeypatch.setenv("IMY_EMBEDDER", "tfidf")
     p = {**_person(), "id": 100}
     r = engine.generate_reply(p, [], [], "hello")
@@ -184,6 +200,7 @@ def test_topic_they_care_about():
 
 
 def test_filler_not_used_after_a_question(monkeypatch):
+    monkeypatch.setattr(engine, "REUSE_LINES", True)
     monkeypatch.setenv("IMY_EMBEDDER", "tfidf")
     msgs = [{"speaker": s, "text": t, "screenshot_id": 1} for s, t in
             [("person", "hahaha"), ("person", "true"), ("person", "oo")]]   # only fillers, no exchanges

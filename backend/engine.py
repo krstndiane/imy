@@ -34,12 +34,15 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import claude, parser, personality, style as style_mod
+from . import claude, parser, personality, smalltalk, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
 THRESHOLDS = {"sentence-transformers": (0.65, 0.45), "tfidf": (0.55, 0.45)}
 MAX_BUBBLES = 3
+# Off (default): screenshots are used only to learn their style; replies are written fresh.
+# IMY_REUSE_LINES=1 goes back to answering with their own old messages when one seems to match.
+REUSE_LINES = os.environ.get("IMY_REUSE_LINES", "0") == "1"
 
 INTENTS = {
     "greeting": r"^\s*(hi+|hello+|hey+|yo|hoy|good (morning|afternoon|evening)|magandang (umaga|hapon|gabi))\b",
@@ -284,6 +287,18 @@ class PersonIndex:
         if echoed and len(user_text.split()) <= 5 and act not in ("doubt", "funny") and not intent:
             act = "clarify"
         about_last = act in ("clarify", "doubt")
+
+        if not REUSE_LINES:
+            # Default: the screenshots only teach HOW they write. The reply itself is written for
+            # what you just said (smalltalk.py, then personality.py), then put in their style.
+            found = None if about_last else smalltalk.reply(user_text, history, self.style, self.answers, self.name, rng, recent)
+            if found:
+                text, why = found
+                text = style_mod.apply_style(text.replace("{e}", self._endearment(rng)), self.style, rng)
+                return Reply([text], "smalltalk", 0.0, None, intent, note=f"Written for what you said ({why}), in their style.", embedder=kind)
+            text, why = personality.compose(user_text, self.style, self.answers, rng, recent, act)
+            return Reply([text], "personality", 0.0, None, None, note=f"Written from their personality and writing style: {why}.", embedder=kind)
+
         if best >= (0.9 if about_last else self.strong) and (match := pick_match()):
             return match
 

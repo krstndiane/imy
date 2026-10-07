@@ -191,15 +191,15 @@ BANKS = {
 BANKS_TL = {
     "clarify":      ["wala hahaha", "de wala yun", "basta hahaha", "wala lang", "mahirap iexplain eh"],
     "doubt":        ["oo nga", "totoo nga", "seryoso nga", "de totoo", "oo nga hahaha"],
-    "yes_no":       ["oo naman", "oo hahaha", "siguro", "depende", "di pa eh"],
-    "wh":           ["ewan ko rin eh", "di ko pa sure", "depende eh", "pag isipan ko muna"],
+    "yes_no":       ["oo naman", "oo hahaha", "siguro", "depende, bakit?", "di pa eh"],
+    "wh":           ["hmm di ko sure eh, ikaw ano sa tingin mo?", "ewan ko rin eh hahaha", "di ko alam eh, bakit?", "pag isipan ko muna"],
     "opinion":      ["pwede naman", "oks lang naman", "depende eh", "pag isipan muna natin"],
     "request":      ["sige, ano yun", "oo naman, ano yun", "sige lang", "sige sige, go"],
     "down":         ["bakit, ano nangyari", "pahinga ka muna", "andito lang ako", "kaya mo yan"],
     "good_news":    ["uy nice", "ayos yan", "congrats", "galing naman"],
     "funny":        ["hahaha", "loko hahaha", "hahaha totoo"],
-    "short_remark": ["oks", "sige", "gets", "oo nga"],
-    "statement":    ["ah ganun ba", "gets gets", "oks, tas ano na", "sige sige"],
+    "short_remark": ["oo nga", "hahaha oo", "sige sige", "gets"],
+    "statement":    ["ah ganun ba, tas ano nangyari?", "ohh, kamusta naman?", "talaga? kwento mo pa", "gets gets, tas?"],
 }
 CARE_LINES = ["that really matters to me", "you know i care about that", "i'm glad you brought that up"]
 WORRY_LINES = ["that's been on my mind too", "i think about that a lot"]
