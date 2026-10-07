@@ -42,16 +42,22 @@ THRESHOLDS = {"sentence-transformers": (0.65, 0.45), "tfidf": (0.55, 0.45)}
 MAX_BUBBLES = 3
 
 INTENTS = {
-    "greeting": r"^\s*(hi+|hello+|hey+|yo|hoy|kumusta|musta|good (morning|afternoon|evening)|magandang (umaga|hapon|gabi))\b",
-    "how_are_you": r"\b(how are you|how r u|how('?s| is) (it going|everything|your day)|hbu|wbu|kumusta ka|musta ka|what'?s up|sup)\b",
+    "greeting": r"^\s*(hi+|hello+|hey+|yo|hoy|good (morning|afternoon|evening)|magandang (umaga|hapon|gabi))\b",
+    "how_are_you": r"\b(how are you|how r u|how('?s| is) (it going|everything|your day)|hbu|wbu|(k[au])?musta|what'?s up|sup)\b",
     "thanks": r"\b(thanks|thank you|thx|ty|salamat)\b",
     "goodnight": r"\b(good ?night|gn|sleep well|sweet dreams|tulog na)\b",
-    "miss_you": r"\b(i miss you|miss you|miss u|namiss kita|na-?miss kita|i missed you)\b",
+    "miss_you": r"\b(i miss you|miss you|miss u|miss (na )?kita|namiss kita|na-?miss kita|namimiss kita|i missed you)\b",
     "love_you": r"\b(i love you|love you|luv u|love u|ily|mahal kita)\b",
     "sorry": r"\b(sorry|i'?m sorry|patawad|pasensya)\b",
+    # everyday small talk
+    "doing": r"\b(what are you doing|what r u doing|wyd|whatcha doing|ano(ng)? (gina)?gawa mo|gawa mo)\b",
+    "eaten": r"\b(have you eaten|did you eat|kumain ka na|kain ka na|nag ?(lunch|dinner|breakfast) ka na)\b",
+    "where": r"\b(where are you|where r u|wru|(na)?sa?an ka( na)?|asan ka( na)?)\b",
+    "awake": r"\b(are you (still )?(awake|up)|still up|gising ka pa|tulog ka na ba)\b",
 }
 INTENT_RES = {k: re.compile(v, re.I) for k, v in INTENTS.items()}
-INTENT_MAX_WORDS = {"greeting": 4, "how_are_you": 8, "thanks": 6, "goodnight": 6, "miss_you": 10, "love_you": 8, "sorry": 10}
+INTENT_MAX_WORDS = {"greeting": 4, "how_are_you": 8, "thanks": 6, "goodnight": 6, "miss_you": 10, "love_you": 8, "sorry": 10,
+                    "doing": 0, "eaten": 0, "where": 0, "awake": 0}   # 0: these are your questions, so never reuse their messages
 
 # {e} is replaced by one of the person's endearments (sometimes, based on how often they use them).
 TEMPLATES = {
@@ -62,7 +68,27 @@ TEMPLATES = {
     "miss_you": ["miss you too{e}", "I miss you too{e}"],
     "love_you": ["love you too{e}"],
     "sorry": ["it's okay{e}", "don't worry about it{e}"],
+    "doing": ["nothing much{e}, you?", "just resting{e}. you?"],
+    "eaten": ["yeah, a while ago. you?", "not yet{e}, you?"],
+    "where": ["just at home{e}", "home, why?"],
+    "awake": ["yeah still up{e}, you?", "still up, why?"],
 }
+# The same, for people who write Tagalog/Taglish.
+TEMPLATES_TL = {
+    "greeting": ["uy{e}", "hi{e}", "hello{e}"],
+    "how_are_you": ["okay lang naman{e}, ikaw?", "oks lang{e}, ikaw kamusta", "eto buhay pa hahaha, ikaw?"],
+    "thanks": ["wala yun{e}", "no prob{e}"],
+    "goodnight": ["goodnight{e}", "tulog ka na{e}", "sige tulog na{e}"],
+    "miss_you": ["miss you too{e}", "miss na rin kita{e}"],
+    "love_you": ["love you too{e}"],
+    "sorry": ["oks lang yun{e}", "wala yun{e}"],
+    "doing": ["wala naman{e}, ikaw?", "eto nakahiga lang hahaha, ikaw?", "nagpapahinga lang{e}"],
+    "eaten": ["oo kanina pa, ikaw?", "di pa eh, ikaw?", "tapos na{e}, ikaw kumain ka na?"],
+    "where": ["bahay lang{e}", "dito lang sa bahay, bakit?"],
+    "awake": ["oo gising pa{e}, ikaw?", "gising pa, bakit?"],
+}
+# Only plain reactions (a laugh, a yes, an okay) are safe to reuse as a reply to anything.
+REACTION_RE = re.compile(r"(?i)^(h*(ha|he)+h*a*|o+k+[sie]*|oo+|ye+s+|yup|sige+|mhm+|hmm+|true+|gets|nice+|noted|alrighty?|lol+)$")
 # A random one-liner ("hahaha", "true") only makes sense after these kinds of message.
 # After a question, an opinion request, bad/good news, etc. we compose a fitting reply instead.
 FILLER_OK_ACTS = {"statement", "short_remark", "funny"}
@@ -74,7 +100,6 @@ def _question_labels() -> dict:
     return {q["id"]: q["text"] for s in data["sections"] for q in s["questions"]}
 
 
-VOWELLESS_OK = {"mhm", "mhmm", "hmm", "hmmm", "kk", "brb", "nvm"}
 TAGALOG_RE = re.compile(r"\b(ako|ka|mo|ko|yung|lang|naman|hindi|di|oo|ang|mga|kasi|pero|wala|ba|po|din|rin|nga|ih|eh)\b", re.I)
 
 
@@ -85,7 +110,7 @@ def _usable_filler(text: str) -> bool:
     if text.isupper() and not re.fullmatch(r"(?i)[\Whae]+", text):   # "ICT", "SEF"; but keep "HAHAHA"
         return False
     words = re.findall(r"[^\W\d_]+", text)
-    return any((len(w) >= 3 and re.search(r"[aeiou]", w, re.I)) or w.lower() in VOWELLESS_OK for w in words)
+    return bool(words) and all(REACTION_RE.match(w) for w in words)
 
 
 def detect_intent(text: str) -> str | None:
@@ -228,8 +253,17 @@ class PersonIndex:
         matches = []
         if self.prompt_vecs is not None:
             sims = self.space.similarity(self.prompt_vecs, self._query(user_text, history))
-            order = np.argsort(-sims)[:5]
-            matches = [(float(sims[i]), int(i)) for i in order]
+            order = np.argsort(-sims)[:8]
+            said = set(re.findall(r"\w{4,}", user_text.lower()))
+
+            def sensible(score: float, i: int) -> bool:
+                # The reply must be real words, and (for letter-pattern matching, which is easily fooled by
+                # short texts) what you said then must share an actual word with what you say now.
+                if not re.search(r"[^\W\d_]{3,}", self.replies[i][0]):
+                    return False
+                return kind != "tfidf" or score >= 0.8 or bool(said & set(re.findall(r"\w{4,}", self.prompts[i].lower())))
+
+            matches = [(float(sims[i]), int(i)) for i in order if sensible(float(sims[i]), int(i))][:5]
         best = matches[0][0] if matches else 0.0
 
         def pick_match() -> Reply | None:
@@ -244,6 +278,11 @@ class PersonIndex:
 
         # A loose match is no answer to "what do you mean?" or "really?" - those refer to the last message.
         act = personality.classify_act(user_text)
+        # Echoing a word they just said ("depende eh" -> "panong depende") is asking about that message.
+        last = next((h["text"] for h in reversed(history) if h["role"] == "person"), "")
+        echoed = set(re.findall(r"\w{4,}", last.lower())) & set(re.findall(r"\w{4,}", user_text.lower()))
+        if echoed and len(user_text.split()) <= 5 and act not in ("doubt", "funny") and not intent:
+            act = "clarify"
         about_last = act in ("clarify", "doubt")
         if best >= (0.9 if about_last else self.strong) and (match := pick_match()):
             return match
@@ -252,7 +291,8 @@ class PersonIndex:
             pool = [t for t in self.intent_pools.get(intent, []) if t.strip().lower() not in recent]
             if pool:
                 return Reply([rng.choice(pool)], "intent", best, None, intent, embedder=kind)
-            tpl = rng.choice(TEMPLATES[intent]).replace("{e}", self._endearment(rng))
+            bank = TEMPLATES_TL if self.style.get("tagalog") else TEMPLATES
+            tpl = rng.choice(bank[intent]).replace("{e}", self._endearment(rng))
             return Reply([style_mod.apply_style(tpl, self.style, rng)], "template", best, None, intent,
                          note="No matching message from them yet; used a template shaped by their style.", embedder=kind)
 
@@ -265,7 +305,7 @@ class PersonIndex:
                          note="No close match in the screenshots; used one of their short all-purpose replies.", embedder=kind)
 
         # Nothing real fits: write a sensible reply from their personality and style.
-        text, why = personality.compose(user_text, self.style, self.answers, rng, recent)
+        text, why = personality.compose(user_text, self.style, self.answers, rng, recent, act)
         return Reply([text], "personality", best, None, None,
                      note=f"No close match in the screenshots, so this was composed from their personality and writing style: {why}.",
                      embedder=kind)

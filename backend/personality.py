@@ -24,7 +24,7 @@ from . import style as style_mod
 # --------------------------------------------------------------- 1. what is the user doing?
 WH = r"(what|why|how|when|where|who|which)\b"
 YES_NO = r"(do|does|did|are|is|was|were|have|has|had|can|could|will|would|should|am|shall)\b"
-TL_WH = r"ano|anong|anu|bakit|bkt|paano|pano|saan|san|nasaan|nasan|kailan|kelan|sino|ilan|magkano|alin"
+TL_WH = r"ano|anong|anu|bakit|bkt|paano|paanong|pano|panong|saan|san|nasaan|nasan|kailan|kelan|sino|ilan|magkano|alin"
 
 
 def classify_act(text: str) -> str:
@@ -38,7 +38,7 @@ def classify_act(text: str) -> str:
         return "doubt"
     if re.search(r"what do you think|what('?s| is) your (take|opinion)|your thoughts|thoughts\?|do you think|how about (this|that)|what about (this|that)", t):
         return "opinion"
-    if re.search(r"^(can|could|will|would) you\b|\bplease\b|\bneed you to\b|\bhelp me\b", t):
+    if re.search(r"^(can|could|will|would) (you|i)\b|\bplease\b|\bneed you to\b|\bhelp me\b|\b(pwede|puwede|pede|paki\w*|patulong|tulungan)\b", t):
         return "request"
     if "?" in t or re.match(rf"^({WH}|{YES_NO})", t):
         return "yes_no" if re.match(rf"^{YES_NO}", t) else "wh"
@@ -189,12 +189,12 @@ BANKS = {
 }
 # The same acts for people who write Tagalog/Taglish (engine.py sets style["tagalog"]).
 BANKS_TL = {
-    "clarify":      ["wala hahaha", "de wala yun", "typo lang", "mali lang pindot ko", "alin dun"],
+    "clarify":      ["wala hahaha", "de wala yun", "basta hahaha", "wala lang", "mahirap iexplain eh"],
     "doubt":        ["oo nga", "totoo nga", "seryoso nga", "de totoo", "oo nga hahaha"],
     "yes_no":       ["oo naman", "oo hahaha", "siguro", "depende", "di pa eh"],
-    "wh":           ["ewan ko rin eh", "di ko pa sure", "depende eh", "bakit mo natanong", "pag isipan ko muna"],
+    "wh":           ["ewan ko rin eh", "di ko pa sure", "depende eh", "pag isipan ko muna"],
     "opinion":      ["pwede naman", "oks lang naman", "depende eh", "pag isipan muna natin"],
-    "request":      ["sige, ano yun", "oks, ano kailangan mo", "sige sige"],
+    "request":      ["sige, ano yun", "oo naman, ano yun", "sige lang", "sige sige, go"],
     "down":         ["bakit, ano nangyari", "pahinga ka muna", "andito lang ako", "kaya mo yan"],
     "good_news":    ["uy nice", "ayos yan", "congrats", "galing naman"],
     "funny":        ["hahaha", "loko hahaha", "hahaha totoo"],
@@ -207,9 +207,9 @@ FOLLOW_UPS = {"logical": "what's your plan?", "emotional": "how are you feeling 
 STANDALONE_ACTS = {"statement", "short_remark", "funny"}   # acts where a catchphrase on its own fits
 
 
-def compose(user_text: str, st: dict, answers: dict, rng, recent=()) -> tuple[str, str]:
+def compose(user_text: str, st: dict, answers: dict, rng, recent=(), act: str | None = None) -> tuple[str, str]:
     """Returns (reply_text, short explanation for the 'why this reply?' popover)."""
-    act = classify_act(user_text)
+    act = act or classify_act(user_text)
     tr = read_traits(answers, st)
 
     # Stances to draw from: how they think, then their strongest vibes. Earlier = heavier.
