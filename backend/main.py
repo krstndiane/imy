@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import engine, ocr, parser, style as style_mod
+from . import claude, engine, ocr, parser, style as style_mod
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,6 +81,16 @@ def _messages_for_engine(conn, pid: int) -> list[dict]:
         "SELECT m.* FROM messages m JOIN screenshots s ON s.id = m.screenshot_id "
         "WHERE m.person_id = ? ORDER BY s.id, m.position", (pid,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def _person_for_engine(conn, pid: int) -> dict:
+    """The person plus the platform most of their screenshots came from."""
+    person = _person_dict(_person_row(conn, pid))
+    row = conn.execute(
+        "SELECT platform FROM screenshots WHERE person_id = ? AND platform NOT IN ('unknown', 'text-import') "
+        "GROUP BY platform ORDER BY COUNT(*) DESC LIMIT 1", (pid,)).fetchone()
+    person["platform"] = row["platform"] if row else "unknown"
+    return person
 
 
 def _store_messages(conn, pid: int, shot_id: int, msgs: list[dict]) -> None:
@@ -189,12 +199,19 @@ def upload_screenshots(pid: int, files: list[UploadFile] = File(...)):
             except Exception:
                 dest.unlink(missing_ok=True)
                 raise HTTPException(400, f"{f.filename}: couldn't read this image.")
-            try:
-                lines, size, rgb = ocr.extract_lines(img)
-            except ocr.TesseractNotFoundError:
-                dest.unlink(missing_ok=True)
-                raise HTTPException(503, "Tesseract OCR isn't installed or isn't on your PATH. See the README (step 1).")
-            parsed = parser.parse_screenshot(lines, size, rgb, names)
+            parsed = None
+            if claude.enabled():
+                try:
+                    parsed = claude.parse_screenshot(img, names)
+                except Exception as exc:  # fall back to local OCR
+                    print(f"[imy] Claude couldn't read {f.filename}: {claude.explain(exc)}")
+            if parsed is None:
+                try:
+                    lines, size, rgb = ocr.extract_lines(img)
+                except ocr.TesseractNotFoundError:
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(503, "Tesseract OCR isn't installed or isn't on your PATH. See the README (step 1).")
+                parsed = parser.parse_screenshot(lines, size, rgb, names)
             cur = conn.execute(
                 "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
                 (pid, f.filename, f"{pid}/{dest.name}", parsed["platform"], parsed["raw_text"], now()))
@@ -333,7 +350,7 @@ def send_chat(pid: int, body: ChatIn):
     if not text:
         raise HTTPException(400, "Message is empty.")
     with db() as conn:
-        person = _person_dict(_person_row(conn, pid))
+        person = _person_for_engine(conn, pid)
         history = [dict(r) for r in conn.execute(
             "SELECT role, text FROM chat_messages WHERE person_id = ? ORDER BY id DESC LIMIT 16", (pid,)).fetchall()][::-1]
         conn.execute("INSERT INTO chat_messages (person_id, role, text, created_at) VALUES (?,?,?,?)", (pid, "user", text, now()))
@@ -359,7 +376,7 @@ def clear_chat(pid: int):
 @app.get("/api/persons/{pid}/style")
 def get_style(pid: int):
     with db() as conn:
-        person = _person_dict(_person_row(conn, pid))
+        person = _person_for_engine(conn, pid)
         index = engine.get_index(person, _messages_for_engine(conn, pid))
         return {"lines": style_mod.describe_style(index.style), "embedder": index.space.kind,
                 "exchanges": len(index.prompts), "messages": index.style["n_messages"]}

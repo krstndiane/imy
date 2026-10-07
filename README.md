@@ -66,6 +66,8 @@ pytest backend/tests -q
 4. **Fallback** when nothing fits: after a plain remark, one of their short all-purpose replies ("hahaha", "oo", "true"). After a question, an opinion request, or good/bad news, `backend/personality.py` composes a fitting reply from the interview answers (Q6-Q10, Q14-Q15) and their writing style.
 5. **Optional:** tick *Use a local model* in "How they write" and, if [Ollama](https://ollama.com) is running (`ollama pull llama3.2`), a local LLM writes the reply using retrieved examples, the interview answers and the style summary. Change the model with `OLLAMA_MODEL`.
 
+6. **Optional Claude mode** (`backend/claude.py`): put `ANTHROPIC_API_KEY=sk-ant-...` in a `.env` file in the project root (or set it in your shell) and restart. Claude then reads screenshots directly (platform, who said what, emojis included) instead of Tesseract, and writes replies in the person's voice from the interview answers, style summary and full parsed chat history. If a call fails, imy falls back to the steps above. Costs money per use, and **your screenshots, messages and answers are sent to Anthropic**. Set `IMY_CLAUDE=0` to switch it off without removing the key; `IMY_CLAUDE_MODEL` changes the model.
+
 Every reply has a **"why this reply?"** link showing which step produced it.
 
 ## Where to tweak things
@@ -92,4 +94,4 @@ data/      created on first run: imy.db + uploaded screenshots
 - **Replies are retrieved, not invented.** They sound like the person because they *are* the person's words, but they can be off-topic when nothing in the screenshots is close. The local-LLM option is the way to get more fluent, novel replies.
 - **OCR can't read emojis** and can misread stylised fonts, so use pasted text for emoji-heavy chats.
 - **Speaker detection is heuristic** (bubble side, bubble colour, names above messages). Group chats and unusual themes may need corrections in the Review step.
-- Your chats and screenshots stay on your machine. The page loads two Google Fonts from the internet, and the embedding model is downloaded once from Hugging Face.
+- Your chats and screenshots stay on your machine unless you turn on Claude mode (step 6 above). The page loads two Google Fonts from the internet, and the embedding model is downloaded once from Hugging Face.

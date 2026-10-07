@@ -16,6 +16,8 @@ How a reply is produced (no external API needed):
   5. OPTIONAL  If "Use local LLM" is on and Ollama is running, a local model
                writes the reply instead, using retrieved examples + interview
                answers + the style summary as guidance.
+  6. OPTIONAL  If ANTHROPIC_API_KEY is set, Claude writes the reply instead of
+               all of the above (see claude.py); steps 1-4 are the fallback.
 
 Tweak the numbers in THRESHOLDS / TEMPLATES below to change behaviour.
 """
@@ -32,7 +34,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import personality, style as style_mod
+from . import claude, personality, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
@@ -150,6 +152,8 @@ class PersonIndex:
         self.person = person
         self.answers = person["answers"]
         self.name = person["name"]
+        self.messages = messages
+        self.platform = person.get("platform", "unknown")
 
         turns = _turns(messages)
         self.prompts: list[str] = []          # what the user said
@@ -283,6 +287,17 @@ class PersonIndex:
             raise RuntimeError("empty response")
         return Reply(bubbles, "llm", 0.0, None, detect_intent(user_text), note=f"Written by local model {model}.", embedder=self.space.kind)
 
+    # ---- optional Claude API (see claude.py)
+    def claude_reply(self, user_text: str, history: list[dict]) -> Reply:
+        labels = _question_labels()
+        facts = "\n".join(f"- {labels[k]} {v.strip()}" for k, v in self.answers.items() if v and v.strip() and k in labels)
+        style = "\n".join("- " + s for s in style_mod.describe_style(self.style))
+        system = claude.persona_system(self.name, self.answers.get("q5", ""), self.platform, facts, style,
+                                       self.messages, MAX_BUBBLES)
+        bubbles = claude.chat(system, history, user_text, MAX_BUBBLES)
+        return Reply(bubbles, "claude", 0.0, None, detect_intent(user_text),
+                     note=f"Written by Claude ({claude.MODEL}).", embedder=self.space.kind)
+
 
 # ------------------------------------------------------------------ cache + public API
 _CACHE: dict[int, tuple[int, PersonIndex]] = {}
@@ -307,7 +322,13 @@ def generate_reply(person: dict, messages: list[dict], history: list[dict], user
     seed = int(hashlib.md5(f"{user_text}|{len(history)}".encode()).hexdigest(), 16) % (2 ** 32)
     rng = random.Random(seed)
     note = None
-    if person.get("use_llm"):
+    if claude.enabled():
+        try:
+            return index.claude_reply(user_text, history)
+        except Exception as exc:
+            print(f"[imy] Claude failed: {exc}")
+            note = f"Couldn't get a reply from Claude ({claude.explain(exc)}). Used pattern matching instead."
+    elif person.get("use_llm"):
         try:
             return index.llm_reply(user_text, history, rng)
         except Exception as exc:
