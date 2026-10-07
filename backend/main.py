@@ -58,7 +58,7 @@ def _person_summary(conn, row) -> dict:
     one = lambda sql: conn.execute(sql, (pid,)).fetchone()[0]
     return {
         "id": pid, "name": p["name"], "nickname": p["answers"].get("q2", ""),
-        "answers": p["answers"], "use_llm": p["use_llm"],
+        "answers": p["answers"], "use_llm": p["use_llm"], "platform": p.get("platform") or "",
         "created_at": p["created_at"], "updated_at": p["updated_at"],
         "screenshot_count": one("SELECT COUNT(*) FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL"),
         "message_count": one("SELECT COUNT(*) FROM messages WHERE person_id = ?"),
@@ -86,6 +86,8 @@ def _messages_for_engine(conn, pid: int) -> list[dict]:
 def _person_for_engine(conn, pid: int) -> dict:
     """The person plus the platform most of their screenshots came from."""
     person = _person_dict(_person_row(conn, pid))
+    if person.get("platform"):  # chosen by the user in setup
+        return person
     row = conn.execute(
         "SELECT platform FROM screenshots WHERE person_id = ? AND platform NOT IN ('unknown', 'text-import') "
         "GROUP BY platform ORDER BY COUNT(*) DESC LIMIT 1", (pid,)).fetchone()
@@ -117,8 +119,17 @@ def get_questions():
 
 
 # ---------------------------------------------------------------- persons
+PLATFORMS = {"", "messenger", "imessage", "instagram", "whatsapp", "telegram"}
+
+
 class AnswersIn(BaseModel):
     answers: dict[str, str] = {}
+    platform: str | None = None   # None = leave unchanged
+
+
+def _check_platform(platform: str | None) -> None:
+    if platform is not None and platform not in PLATFORMS:
+        raise HTTPException(400, "Unknown platform.")
 
 
 @app.get("/api/persons")
@@ -130,11 +141,12 @@ def list_persons():
 
 @app.post("/api/persons")
 def create_person(body: AnswersIn):
+    _check_platform(body.platform)
     with db() as conn:
         ts = now()
         cur = conn.execute(
-            "INSERT INTO persons (name, answers, created_at, updated_at) VALUES (?,?,?,?)",
-            (_name_from_answers(body.answers), json.dumps(body.answers), ts, ts))
+            "INSERT INTO persons (name, answers, platform, created_at, updated_at) VALUES (?,?,?,?,?)",
+            (_name_from_answers(body.answers), json.dumps(body.answers), body.platform or "", ts, ts))
         return _person_summary(conn, _person_row(conn, cur.lastrowid))
 
 
@@ -146,10 +158,11 @@ def get_person(pid: int):
 
 @app.put("/api/persons/{pid}")
 def update_person(pid: int, body: AnswersIn):
+    _check_platform(body.platform)
     with db() as conn:
         _person_row(conn, pid)
-        conn.execute("UPDATE persons SET name = ?, answers = ? WHERE id = ?",
-                     (_name_from_answers(body.answers), json.dumps(body.answers), pid))
+        conn.execute("UPDATE persons SET name = ?, answers = ?, platform = COALESCE(?, platform) WHERE id = ?",
+                     (_name_from_answers(body.answers), json.dumps(body.answers), body.platform, pid))
         bump_version(conn, pid)
         return _person_summary(conn, _person_row(conn, pid))
 

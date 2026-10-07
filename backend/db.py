@@ -69,6 +69,9 @@ def init_db() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with db() as conn:
         conn.executescript(SCHEMA)
+        # Added later: the app the user normally talks to this person in (sets the chat's look).
+        if "platform" not in [c["name"] for c in conn.execute("PRAGMA table_info(persons)")]:
+            conn.execute("ALTER TABLE persons ADD COLUMN platform TEXT NOT NULL DEFAULT ''")
 
 
 @contextmanager

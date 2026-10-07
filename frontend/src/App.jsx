@@ -13,6 +13,13 @@ export default function App() {
   const [mode, setMode] = useState("chat");
   const [trainId, setTrainId] = useState(null);
   const [error, setError] = useState("");
+  // Light or dark: remembered in this browser; the first visit follows the computer's setting.
+  const [theme, setTheme] = useState(() => localStorage.getItem("imy.theme")
+    || (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("imy.theme", theme);
+  }, [theme]);
 
   const refresh = useCallback(async () => {
     try {
@@ -41,6 +48,8 @@ export default function App() {
         activeId={mode === "chat" ? activeId : null}
         onSelect={(id) => { setActiveId(id); setMode("chat"); }}
         onNew={() => startTraining(null)}
+        theme={theme}
+        onTheme={setTheme}
       />
       <main className="main">
         {error && <div className="banner error">{error}</div>}
@@ -48,12 +57,14 @@ export default function App() {
           <Trainer
             key={trainId ?? "new"}
             personId={trainId}
+            theme={theme}
+            onTheme={setTheme}
             onDone={finishTraining}
             onSaved={refresh}
             onCancel={() => { refresh(); setMode("chat"); }}
           />
         ) : active ? (
-          <Chat key={active.id} person={active} onChanged={refresh} onEdit={() => startTraining(active.id)} onDelete={() => remove(active.id)} />
+          <Chat key={active.id} person={active} onChanged={refresh} onBack={() => setActiveId(null)} onEdit={() => startTraining(active.id)} onDelete={() => remove(active.id)} />
         ) : (
           <Welcome hasPeople={persons.length > 0} onNew={() => startTraining(null)} />
         )}

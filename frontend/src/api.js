@@ -18,8 +18,8 @@ export const api = {
   questions: () => send("GET", "/api/questions"),
   persons: () => send("GET", "/api/persons"),
   person: (id) => send("GET", `/api/persons/${id}`),
-  createPerson: (answers) => send("POST", "/api/persons", { answers }),
-  updatePerson: (id, answers) => send("PUT", `/api/persons/${id}`, { answers }),
+  createPerson: (answers, platform) => send("POST", "/api/persons", { answers, platform }),
+  updatePerson: (id, answers, platform) => send("PUT", `/api/persons/${id}`, { answers, platform }),
   deletePerson: (id) => send("DELETE", `/api/persons/${id}`),
   setLlm: (id, use_llm) => send("PUT", `/api/persons/${id}/settings`, { use_llm }),
 

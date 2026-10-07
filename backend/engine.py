@@ -34,11 +34,11 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import claude, personality, style as style_mod
+from . import claude, parser, personality, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
-THRESHOLDS = {"sentence-transformers": (0.65, 0.45), "tfidf": (0.55, 0.35)}
+THRESHOLDS = {"sentence-transformers": (0.65, 0.45), "tfidf": (0.55, 0.45)}
 MAX_BUBBLES = 3
 
 INTENTS = {
@@ -74,11 +74,24 @@ def _question_labels() -> dict:
     return {q["id"]: q["text"] for s in data["sections"] for q in s["questions"]}
 
 
+VOWELLESS_OK = {"mhm", "mhmm", "hmm", "hmmm", "kk", "brb", "nvm"}
+TAGALOG_RE = re.compile(r"\b(ako|ka|mo|ko|yung|lang|naman|hindi|di|oo|ang|mga|kasi|pero|wala|ba|po|din|rin|nga|ih|eh)\b", re.I)
+
+
+def _usable_filler(text: str) -> bool:
+    """Is this short message a real word, not an OCR scrap like "GB", "Fy" or "60"?"""
+    if re.search(r"\d|\?", text) or len(text.split()) > 2 or re.search(r"\bba\b", text, re.I):
+        return False
+    if text.isupper() and not re.fullmatch(r"(?i)[\Whae]+", text):   # "ICT", "SEF"; but keep "HAHAHA"
+        return False
+    words = re.findall(r"[^\W\d_]+", text)
+    return any((len(w) >= 3 and re.search(r"[aeiou]", w, re.I)) or w.lower() in VOWELLESS_OK for w in words)
+
+
 def detect_intent(text: str) -> str | None:
-    for name, rx in INTENT_RES.items():
-        if rx.search(text):
-            return name
-    return None
+    found = [name for name, rx in INTENT_RES.items() if rx.search(text)]
+    # "hi i miss you" is about missing them, not about saying hi
+    return next((n for n in found if n != "greeting"), found[0] if found else None)
 
 
 # ------------------------------------------------------------------ embeddings
@@ -165,13 +178,16 @@ class PersonIndex:
 
         self.person_texts = [m["text"] for m in messages if m["speaker"] == "person"]
         self.style = style_mod.build_style(self.person_texts, self.answers)
+        # Do they mostly write Tagalog/Taglish? Then composed replies should too.
+        tl = sum(1 for t in self.person_texts if TAGALOG_RE.search(t))
+        self.style["tagalog"] = len(self.person_texts) >= 5 and tl / len(self.person_texts) >= 0.2
 
         self.space = VectorSpace(self.prompts + self.person_texts)
         self.prompt_vecs = self.space.encode(self.prompts) if self.prompts else None
         self.strong, self.weak = THRESHOLDS[self.space.kind]
 
         # Their own short messages that fit almost any conversation.
-        short = [t for t in self.person_texts if len(t.split()) <= 3 and not detect_intent(t)]
+        short = [t for t in self.person_texts if len(t.split()) <= 3 and not detect_intent(t) and _usable_filler(t)]
         self.fillers = short
         # Their own messages grouped by intent, e.g. everything they said that counts as "goodnight".
         # (Length-capped so a long message that merely starts with "hey" isn't used as a greeting.)
@@ -216,16 +232,21 @@ class PersonIndex:
             matches = [(float(sims[i]), int(i)) for i in order]
         best = matches[0][0] if matches else 0.0
 
-        def pick_match() -> Reply:
-            pool = [(s, i) for s, i in matches if s >= best - 0.08]
-            # prefer replies we haven't just used; softly favour higher similarity
-            w = [np.exp((s - best) / 0.03) * (0.15 if self.replies[i][0].strip().lower() in recent else 1.0) for s, i in pool]
+        def pick_match() -> Reply | None:
+            # Never repeat a reply they just gave: a real person wouldn't say the same thing twice.
+            pool = [(s, i) for s, i in matches if s >= best - 0.08 and self.replies[i][0].strip().lower() not in recent]
+            if not pool:
+                return None
+            w = [np.exp((s - best) / 0.03) for s, i in pool]  # softly favour higher similarity
             s, i = rng.choices(pool, weights=w)[0]
             bubbles = [self._trim(b) for b in self.replies[i]]
             return Reply(bubbles, "retrieval", round(s, 3), self.prompts[i], intent, embedder=kind)
 
-        if best >= self.strong:
-            return pick_match()
+        # A loose match is no answer to "what do you mean?" or "really?" - those refer to the last message.
+        act = personality.classify_act(user_text)
+        about_last = act in ("clarify", "doubt")
+        if best >= (0.9 if about_last else self.strong) and (match := pick_match()):
+            return match
 
         if intent:
             pool = [t for t in self.intent_pools.get(intent, []) if t.strip().lower() not in recent]
@@ -235,11 +256,11 @@ class PersonIndex:
             return Reply([style_mod.apply_style(tpl, self.style, rng)], "template", best, None, intent,
                          note="No matching message from them yet; used a template shaped by their style.", embedder=kind)
 
-        if best >= self.weak:
-            return pick_match()
+        if best >= self.weak and not about_last and (match := pick_match()):
+            return match
 
-        fillers = [f for f in self.fillers if f.strip().lower() not in recent] or self.fillers
-        if fillers and personality.classify_act(user_text) in FILLER_OK_ACTS:
+        fillers = [f for f in self.fillers if f.strip().lower() not in recent]
+        if fillers and act in FILLER_OK_ACTS:
             return Reply([rng.choice(fillers)], "filler", best, None, None,
                          note="No close match in the screenshots; used one of their short all-purpose replies.", embedder=kind)
 
@@ -335,6 +356,7 @@ def generate_reply(person: dict, messages: list[dict], history: list[dict], user
             print(f"[imy] local LLM failed: {exc}")
             note = "Couldn't get a reply from the local model (is Ollama running?). Used pattern matching instead."
     reply = index.retrieval_reply(user_text, history, rng)
+    reply.bubbles = [b for b in (parser.clean_text(b) for b in reply.bubbles) if b] or reply.bubbles
     if note:
         reply.note = note
     return reply

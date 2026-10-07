@@ -24,20 +24,33 @@ from . import style as style_mod
 # --------------------------------------------------------------- 1. what is the user doing?
 WH = r"(what|why|how|when|where|who|which)\b"
 YES_NO = r"(do|does|did|are|is|was|were|have|has|had|can|could|will|would|should|am|shall)\b"
+TL_WH = r"ano|anong|anu|bakit|bkt|paano|pano|saan|san|nasaan|nasan|kailan|kelan|sino|ilan|magkano|alin"
 
 
 def classify_act(text: str) -> str:
     t = text.lower().strip()
     words = t.split()
+    # "what do you mean" / "anong gb" / "ha?": they are asking about the last thing that was said
+    if re.search(r"what do (you|u) mean|ibig (mong? )?sabihin|\bmean(ing)?\b|(di|hindi) ko gets|^(ha+|huh|ano|anu|what)\W*$|^anong? \S+\W*$|^oh ano\W*$", t):
+        return "clarify"
+    # "weh di nga" / "for real?": they don't believe it
+    if re.search(r"\bweh+\b|\bdi nga\b|\bbulaan\b|sinungaling|\bcharot\b|\b(for real|fr|seryoso|srsly|seriously|really|talaga)\W*$|\bliar\b|no way", t):
+        return "doubt"
     if re.search(r"what do you think|what('?s| is) your (take|opinion)|your thoughts|thoughts\?|do you think|how about (this|that)|what about (this|that)", t):
         return "opinion"
     if re.search(r"^(can|could|will|would) you\b|\bplease\b|\bneed you to\b|\bhelp me\b", t):
         return "request"
     if "?" in t or re.match(rf"^({WH}|{YES_NO})", t):
         return "yes_no" if re.match(rf"^{YES_NO}", t) else "wh"
-    if re.search(r"\b(ha){2,}|\blol+\b|\blmao\b|😂|🤣|\bfunny\b", t):
+    # Tagalog questions rarely have a question mark: "miss mo ba ako", "san ka na"
+    if re.search(rf"\b({TL_WH})\b", t):
+        return "wh"
+    if re.search(r"\bba\b", t):
+        return "yes_no"
+    if re.search(r"\b(ha){2,}|\b(he){2,}|\blol+\b|\blmao\b|😂|🤣|\bfunny\b", t):
         return "funny"
-    if re.search(r"\b(sad|tired|exhausted|stressed|anxious|sick|hurt|lonely|upset|crying|bad day|rough|worried|scared|overwhelmed|can'?t sleep|failed)\b", t):
+    if re.search(r"\b(sad|tired|exhausted|stressed|anxious|sick|hurt|lonely|upset|crying|bad day|rough|worried|scared|overwhelmed|can'?t sleep|failed"
+                 r"|pagod|malungkot|lungkot|may sakit|masakit|umiiyak|naiiyak|nahihirapan|kabado|takot|puyat)\b", t):
         return "down"
     if re.search(r"\b(got the|passed|won|promoted|finally|excited|so happy|good news|great news|guess what|accepted|engaged|graduat|made it)\b", t):
         return "good_news"
@@ -156,6 +169,15 @@ BANKS = {
         "blunt":     ["ok", "fair"],
         "calm":      ["mhm", "okay"],
     },
+    "clarify": {
+        "neutral":   ["nothing haha, ignore that", "sorry, typo", "nvm that", "wait, which part?"],
+        "blunt":     ["typo", "nvm"],
+    },
+    "doubt": {
+        "neutral":   ["i'm serious", "for real", "i mean it"],
+        "playful":   ["i swear haha", "would i lie to you"],
+        "blunt":     ["yes, really", "i mean it"],
+    },
     "statement": {
         "neutral":   ["i see", "tell me more", "that makes sense", "hmm, interesting"],
         "logical":   ["that makes sense, so what's next?", "what are you going to do about it?"],
@@ -164,6 +186,20 @@ BANKS = {
         "blunt":     ["and then?", "fair enough"],
         "calm":      ["mhm, go on", "okay, i'm listening"],
     },
+}
+# The same acts for people who write Tagalog/Taglish (engine.py sets style["tagalog"]).
+BANKS_TL = {
+    "clarify":      ["wala hahaha", "de wala yun", "typo lang", "mali lang pindot ko", "alin dun"],
+    "doubt":        ["oo nga", "totoo nga", "seryoso nga", "de totoo", "oo nga hahaha"],
+    "yes_no":       ["oo naman", "oo hahaha", "siguro", "depende", "di pa eh"],
+    "wh":           ["ewan ko rin eh", "di ko pa sure", "depende eh", "bakit mo natanong", "pag isipan ko muna"],
+    "opinion":      ["pwede naman", "oks lang naman", "depende eh", "pag isipan muna natin"],
+    "request":      ["sige, ano yun", "oks, ano kailangan mo", "sige sige"],
+    "down":         ["bakit, ano nangyari", "pahinga ka muna", "andito lang ako", "kaya mo yan"],
+    "good_news":    ["uy nice", "ayos yan", "congrats", "galing naman"],
+    "funny":        ["hahaha", "loko hahaha", "hahaha totoo"],
+    "short_remark": ["oks", "sige", "gets", "oo nga"],
+    "statement":    ["ah ganun ba", "gets gets", "oks, tas ano na", "sige sige"],
 }
 CARE_LINES = ["that really matters to me", "you know i care about that", "i'm glad you brought that up"]
 WORRY_LINES = ["that's been on my mind too", "i think about that a lot"]
@@ -187,7 +223,9 @@ def compose(user_text: str, st: dict, answers: dict, rng, recent=()) -> tuple[st
 
     # 1) A topic they care about / worry about gets an in-character reaction.
     words = set(re.findall(r"[a-z']{4,}", user_text.lower()))
-    if tr["care_words"] & words:
+    if st.get("tagalog"):
+        pool, why = BANKS_TL[act], f"they mostly write in Tagalog; your message reads as {act.replace('_', ' ')}"
+    elif tr["care_words"] & words and act not in ("clarify", "doubt"):
         pool, why = CARE_LINES, "your message touches something they care about (interview Q7)"
     elif tr["worry_words"] & words:
         pool, why = WORRY_LINES, "your message touches something they worry about (interview Q9)"
@@ -207,7 +245,7 @@ def compose(user_text: str, st: dict, answers: dict, rng, recent=()) -> tuple[st
     cps = [c for c in st.get("catchphrases", []) if 0 < len(c.split()) <= 6]
     if cps and act in STANDALONE_ACTS and rng.random() < 0.25:
         text, why = rng.choice(cps), why + "; used their catchphrase"
-    elif tr["brevity"] == "long" and not text.endswith("?"):
+    elif tr["brevity"] == "long" and not text.endswith("?") and not st.get("tagalog"):
         text += ". " + FOLLOW_UPS.get(tr["thinking"], "tell me more about it")
 
     # 4) Warmth: laugh, endearment.

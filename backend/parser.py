@@ -35,6 +35,7 @@ CHROME_PATTERNS = [
     r"last seen.*|type a message.*|write a message.*|message|aa|imessage|text message|"
     r"you sent.*|you replied.*|edited|new messages?|unread messages?|end-to-end encrypted.*|"
     r"messages and calls are end-to-end.*|tap to.*|reply|forwarded)\W*$",
+    r"^.{0,14}\(message(\s+\S{1,3}){0,2}\W*$",              # the input bar, e.g. "60 @G BG & (Message"
 ]
 CHROME_RES = [re.compile(p, re.I) for p in CHROME_PATTERNS]
 TRAILING_TIME_RE = re.compile(rf"\s*{_TIME}\s*[vV✓√/\\]*\s*$", re.I)
@@ -69,11 +70,24 @@ def detect_platform(raw_text: str) -> str:
     return best if scores[best] > 0 else "unknown"
 
 
+# OCR reads the round profile picture beside a message as "@", "©" or "€".
+AVATAR_RE = re.compile(r"^(?:[<(\[]?[@©®€][>)\]]?\s+)+")
+
+
 def clean_text(text: str) -> str:
     t = TRAILING_TIME_RE.sub("", text.strip())  # WhatsApp "hello  10:32 PM vv"
+    t = AVATAR_RE.sub("", t)
+    t = re.sub(r"\s[@©®]\s", " ", t)             # ...and again when two lines were joined
     t = re.sub(r"^\|\s", "I ", t)                # OCR reads a leading capital I as "|"
     t = re.sub(r"\s{2,}", " ", t)
     return t.strip()
+
+
+def is_contact_header(text: str, person_names: list[str]) -> bool:
+    """The chat's title bar: the person's name plus at most a couple of stray OCR tokens."""
+    low = text.lower()
+    return any(len(n.strip()) >= 4 and n.strip().lower() in low and len(text.split()) <= len(n.split()) + 2
+               for n in person_names)
 
 
 # ---------------------------------------------------------------- bubble grouping
@@ -217,6 +231,7 @@ def parse_screenshot(lines, size, rgb, person_names: list[str]) -> dict:
         messages, needs_review = parse_headers(lines, size, person_names)
     else:
         messages = parse_bubbles([l for l in lines if not is_chrome(l.text)], size, rgb)
+        messages = [m for i, m in enumerate(messages) if not (i < 2 and is_contact_header(m["text"], person_names))]
     return {"platform": platform, "messages": messages, "raw_text": raw_text, "needs_review": needs_review}
 
 

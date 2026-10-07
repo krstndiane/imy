@@ -1,8 +1,10 @@
+import ThemeSwitch from "./ThemeSwitch";
+
 export function initials(name = "") {
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "?";
 }
 
-export default function Sidebar({ persons, activeId, onSelect, onNew }) {
+export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onTheme }) {
   return (
     <aside className="sidebar">
       <div className="brand">imy</div>
@@ -19,6 +21,8 @@ export default function Sidebar({ persons, activeId, onSelect, onNew }) {
           </button>
         ))}
       </nav>
+      <span className="grow" />
+      <ThemeSwitch theme={theme} onChange={onTheme} />
     </aside>
   );
 }

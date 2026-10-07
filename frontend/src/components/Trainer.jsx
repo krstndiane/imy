@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { PLATFORMS } from "../platforms";
+import ThemeSwitch from "./ThemeSwitch";
 
-/* Trainer: Training Mode in three steps.
-     Interview   -> the 21 questions (rendered from backend/questions.json)
-     Screenshots -> upload images (OCR runs on the server) or paste text
-     Review      -> check who-said-what and fix any mistakes, then Done */
-const STEPS = ["Interview", "Screenshots", "Review"];
+/* Trainer: Training Mode in four steps.
+     Where you talk -> pick the app you chat in; the chat screen will look like it
+     Interview      -> the 21 questions (rendered from backend/questions.json)
+     Screenshots    -> upload images (OCR runs on the server) or paste text
+     Review         -> check who-said-what and fix any mistakes, then Done */
+const STEPS = ["Where you talk", "Interview", "Screenshots", "Review"];
 const RECOMMENDED = 10;
 
-export default function Trainer({ personId, onDone, onCancel, onSaved }) {
-  const [step, setStep] = useState(0);
+export default function Trainer({ personId, onDone, onCancel, onSaved, theme, onTheme }) {
+  const [step, setStep] = useState(personId ? 1 : 0);
   const [questions, setQuestions] = useState(null);
   const [answers, setAnswers] = useState({});
+  const [platform, setPlatform] = useState(null);   // null = not chosen yet
   const [pid, setPid] = useState(personId);
   const [shots, setShots] = useState([]);
   const [flagged, setFlagged] = useState(new Set());
@@ -21,7 +25,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved }) {
   useEffect(() => {
     api.questions().then(setQuestions).catch((e) => setError(e.message));
     if (personId) {
-      api.person(personId).then((p) => setAnswers(p.answers || {}));
+      api.person(personId).then((p) => { setAnswers(p.answers || {}); setPlatform(p.platform || ""); });
       api.screenshots(personId).then(setShots);
     }
   }, [personId]);
@@ -31,7 +35,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved }) {
   async function saveAnswers() {
     setBusy(true); setError("");
     try {
-      const saved = pid ? await api.updatePerson(pid, answers) : await api.createPerson(answers);
+      const saved = pid ? await api.updatePerson(pid, answers, platform ?? "") : await api.createPerson(answers, platform ?? "");
       setPid(saved.id);
       onSaved?.();   // refresh the sidebar list
       return saved.id;
@@ -41,7 +45,11 @@ export default function Trainer({ personId, onDone, onCancel, onSaved }) {
 
   async function next() {
     const id = await saveAnswers();
-    if (id) setStep(1);
+    if (id) setStep(2);
+  }
+  async function pickPlatform() {
+    if (pid && !(await saveAnswers())) return;   // editing: save the new look straight away
+    setStep(1);
   }
 
   const reload = async () => setShots(await api.screenshots(pid));
@@ -64,7 +72,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved }) {
         {STEPS.map((label, i) => (
           <li key={label}>
             <button className={"step" + (i === step ? " current" : "") + (i < step ? " done" : "")}
-              disabled={i > 0 && !pid} onClick={() => setStep(i)}>
+              disabled={(i > 1 && !pid) || (i === 1 && platform === null)} onClick={() => setStep(i)}>
               <span className="step-n">{i + 1}</span>{label}
             </button>
           </li>
@@ -74,20 +82,27 @@ export default function Trainer({ personId, onDone, onCancel, onSaved }) {
       {error && <div className="banner error">{error}</div>}
 
       {step === 0 && (
-        <Interview questions={questions} answers={answers} setAnswers={setAnswers}
-          footer={<button className="btn primary" disabled={busy} onClick={next}>{busy ? "Saving…" : "Save and continue"}</button>} />
+        <PlatformPicker value={platform} onChange={setPlatform} theme={theme} onTheme={onTheme}
+          footer={<button className="btn primary" disabled={busy || platform === null} onClick={pickPlatform}>Continue</button>} />
       )}
       {step === 1 && (
-        <Upload pid={pid} shots={shots} onAdded={addShots} personName={personName}
+        <Interview questions={questions} answers={answers} setAnswers={setAnswers}
           footer={<>
             <button className="btn ghost" onClick={() => setStep(0)}>Back</button>
-            <button className="btn primary" onClick={() => setStep(2)}>Review what was read</button>
+            <button className="btn primary" disabled={busy} onClick={next}>{busy ? "Saving…" : "Save and continue"}</button>
           </>} />
       )}
       {step === 2 && (
-        <Review shots={shots} flagged={flagged} personName={personName} reload={reload}
+        <Upload pid={pid} shots={shots} onAdded={addShots} personName={personName}
           footer={<>
             <button className="btn ghost" onClick={() => setStep(1)}>Back</button>
+            <button className="btn primary" onClick={() => setStep(3)}>Review what was read</button>
+          </>} />
+      )}
+      {step === 3 && (
+        <Review shots={shots} flagged={flagged} personName={personName} reload={reload}
+          footer={<>
+            <button className="btn ghost" onClick={() => setStep(2)}>Back</button>
             <button className="btn primary" onClick={() => onDone(pid)}>Done</button>
           </>} />
       )}
@@ -95,7 +110,35 @@ export default function Trainer({ personId, onDone, onCancel, onSaved }) {
   );
 }
 
-/* ---------- Step 1: the interview ---------- */
+/* ---------- Step 1: where do you two talk? ---------- */
+function PlatformPicker({ value, onChange, theme, onTheme, footer }) {
+  return (
+    <section className="panel">
+      <div className="pick-head">
+        <div>
+          <h2>Where do you two usually talk?</h2>
+          <p className="muted">Your chat with them will look like that app, in light or dark. You can change both later.</p>
+        </div>
+        <ThemeSwitch theme={theme} onChange={onTheme} />
+      </div>
+      <div className="plats" role="radiogroup" aria-label="Messaging app">
+        {PLATFORMS.map((p) => (
+          <button key={p.id || "other"} type="button" role="radio" aria-checked={value === p.id}
+            className={"plat skin-" + (p.id || "imy") + (value === p.id ? " picked" : "")} onClick={() => onChange(p.id)}>
+            <span className="plat-preview" aria-hidden="true">
+              <span className="bubble person">hey</span>
+              <span className="bubble user">hii</span>
+            </span>
+            <span className="plat-name">{p.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="actions">{footer}</div>
+    </section>
+  );
+}
+
+/* ---------- Step 2: the interview ---------- */
 function Interview({ questions, answers, setAnswers, footer }) {
   if (!questions) return <p className="muted">Loading questions…</p>;
   let n = 0;
