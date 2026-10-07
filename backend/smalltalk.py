@@ -135,6 +135,11 @@ ACK_TL = ["ah oks oks", "ahh gets", "nice naman", "buti naman"]
 ACK_EN = ["ah okay", "oh i see", "nice", "that's good"]
 
 
+def covers(user_text: str) -> bool:
+    """Does any rule recognise this message?"""
+    return any(rx.search(user_text.strip()) for _, rx, _, _ in COMPILED)
+
+
 def reply(user_text: str, history: list[dict], st: dict, answers: dict, name: str, rng, recent=()) -> tuple[str, str] | None:
     """Returns (text with {e} still in it, why) or None when no rule covers the message."""
     t = user_text.strip()

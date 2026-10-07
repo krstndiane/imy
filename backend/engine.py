@@ -42,6 +42,7 @@ THRESHOLDS = {"sentence-transformers": (0.65, 0.45), "tfidf": (0.55, 0.45)}
 MAX_BUBBLES = 3
 # Off (default): screenshots are used only to learn their style; replies are written fresh.
 # IMY_REUSE_LINES=1 goes back to answering with their own old messages when one seems to match.
+ECHO_STOP = {"about", "there", "their", "where", "which", "would", "could", "should", "really", "naman", "kamusta", "kumusta", "hahaha", "talaga", "bakit"}
 REUSE_LINES = os.environ.get("IMY_REUSE_LINES", "0") == "1"
 
 INTENTS = {
@@ -283,8 +284,8 @@ class PersonIndex:
         act = personality.classify_act(user_text)
         # Echoing a word they just said ("depende eh" -> "panong depende") is asking about that message.
         last = next((h["text"] for h in reversed(history) if h["role"] == "person"), "")
-        echoed = set(re.findall(r"\w{4,}", last.lower())) & set(re.findall(r"\w{4,}", user_text.lower()))
-        if echoed and len(user_text.split()) <= 5 and act not in ("doubt", "funny") and not intent:
+        echoed = (set(re.findall(r"\w{5,}", last.lower())) & set(re.findall(r"\w{5,}", user_text.lower()))) - ECHO_STOP
+        if echoed and len(user_text.split()) <= 5 and act not in ("doubt", "funny") and not intent and not smalltalk.covers(user_text):
             act = "clarify"
         about_last = act in ("clarify", "doubt")
 
