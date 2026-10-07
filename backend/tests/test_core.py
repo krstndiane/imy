@@ -95,7 +95,7 @@ def test_engine_with_no_screenshots(monkeypatch):
     r = engine.generate_reply(p, [], [], "hello")
     assert r.source == "template" and r.bubbles[0]
     r = engine.generate_reply(p, [], [], "tell me about your day")
-    assert r.source == "empty"
+    assert r.source == "personality" and r.bubbles[0]
 
 
 def test_style_from_messages():
@@ -117,3 +117,87 @@ def test_header_layout_splits_short_lines_but_joins_wrapped_ones():
     msgs, _ = parser.parse_headers(lines, (1000, 800), ["Mia"])
     assert [m["text"] for m in msgs] == [
         "a long message that fills the whole row and wraps onto a second line", "short one", "ok"]
+
+
+# ---- personality fallback -------------------------------------------------
+import pytest
+from backend import personality
+
+
+@pytest.mark.parametrize("text,act", [
+    ("what do you think about that?", "opinion"),
+    ("are you coming tonight?", "yes_no"),
+    ("why is the sky red", "wh"),
+    ("i'm so tired and stressed today", "down"),
+    ("guess what, i passed my exam", "good_news"),
+    ("hahaha that was so funny", "funny"),
+    ("can you help me with something", "request"),
+    ("ok", "short_remark"),
+    ("i went to the market this morning and bought mangoes", "statement"),
+])
+def test_classify_act(text, act):
+    assert personality.classify_act(text) == act
+
+
+def _compose(answers, text, seed=1, texts=()):
+    st = style.build_style(list(texts), answers)
+    return personality.compose(text, st, answers, random.Random(seed))
+
+
+def test_never_admits_missing_data():
+    for q in ["what do you think about that?", "hello?", "i'm sad", "ok", "tell me a story about your trip"]:
+        reply, _ = _compose({}, q)
+        assert "data" not in reply.lower() and "screenshot" not in reply.lower() and reply
+
+
+def test_personality_changes_the_reply_pool():
+    q = "what do you think about that?"
+    logical = {_compose({"q8": "very logical and practical"}, q, s)[0] for s in range(60)}
+    emotional = {_compose({"q8": "driven by her feelings"}, q, s)[0] for s in range(60)}
+    assert "what are the pros and cons though?" in logical and "what are the pros and cons though?" not in emotional
+    assert "something about it feels right" in emotional and "something about it feels right" not in logical
+
+
+def test_short_blunt_stays_brief():
+    ans = {"q11": "short messages", "q15": "blunt and direct", "q8": "logical"}
+    for seed in range(30):
+        reply, _ = _compose(ans, "what do you think about that?", seed)
+        assert len(reply.split()) <= 4, reply
+
+
+def test_endearment_emoji_and_casing_from_style():
+    ans = {"q3": "love", "q12": "lots of emojis", "q15": "playful", "q11": "short"}
+    replies = [_compose(ans, "i got the job!", seed)[0] for seed in range(40)]
+    assert any("love" in r for r in replies)
+    assert any(any(ord(c) > 0x2000 for c in r) for r in replies)   # emoji appear
+    assert all(r == r.lower() or r[0].islower() or any(ord(c) > 0x2000 for c in r) for r in replies)
+
+
+def test_formal_person_gets_capital_and_period():
+    reply, _ = _compose({"q12": "very formal and proper", "q11": "short"}, "what do you think about that?")
+    assert reply[0].isupper() and reply[-1] in ".!?"
+
+
+def test_topic_they_care_about():
+    reply, why = _compose({"q7": "family and cooking"}, "my family is visiting tomorrow")
+    assert "Q7" in why
+
+
+def test_filler_not_used_after_a_question(monkeypatch):
+    monkeypatch.setenv("IMY_EMBEDDER", "tfidf")
+    msgs = [{"speaker": s, "text": t, "screenshot_id": 1} for s, t in
+            [("person", "hahaha"), ("person", "true"), ("person", "oo")]]   # only fillers, no exchanges
+    p = {**_person(), "id": 101}
+    r = engine.generate_reply(p, msgs, [], "what do you think about that?")
+    assert r.source == "personality"
+    r = engine.generate_reply(p, msgs, [], "i was at the market today")
+    assert r.source == "filler"
+
+
+def test_endearment_goes_before_question_mark_and_formal_sentences_are_capitalised():
+    ans = {"q3": "babe", "q15": "blunt"}
+    st = {**style.build_style([], ans), "endearment_rate": 1.0}
+    reply, _ = personality.compose("i'm so tired today", st, ans, random.Random(5))
+    assert "? babe" not in reply
+    reply, _ = _compose({"q12": "formal", "q11": "long paragraphs"}, "what do you think about that?")
+    assert ". T" in reply or reply.count(".") == 1 and reply[0].isupper()

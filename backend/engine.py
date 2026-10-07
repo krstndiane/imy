@@ -10,8 +10,9 @@ How a reply is produced (no external API needed):
   3. INTENTS   Greetings, "miss you", "goodnight" etc. are recognised by rules and
                answered from the person's own matching messages (or a small
                template shaped by their style) when retrieval isn't confident.
-  4. FALLBACK  If nothing matches, pick one of their short all-purpose replies
-               ("hahaha", "true", "oo") the way they'd actually respond.
+  4. FALLBACK  If nothing matches: after a plain remark, one of their short all-purpose
+               replies ("hahaha", "true", "oo"); otherwise personality.py composes a
+               fitting reply from their interview answers (Q6-Q10) and writing style.
   5. OPTIONAL  If "Use local LLM" is on and Ollama is running, a local model
                writes the reply instead, using retrieved examples + interview
                answers + the style summary as guidance.
@@ -31,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import style as style_mod
+from . import personality, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
@@ -60,7 +61,9 @@ TEMPLATES = {
     "love_you": ["love you too{e}"],
     "sorry": ["it's okay{e}", "don't worry about it{e}"],
 }
-ANSWER_LIKE = re.compile(r"^(yes|yeah|yep|oo|opo|no|nope|hindi|maybe|siguro|idk|depends|sure|okay|ok)\b", re.I)
+# A random one-liner ("hahaha", "true") only makes sense after these kinds of message.
+# After a question, an opinion request, bad/good news, etc. we compose a fitting reply instead.
+FILLER_OK_ACTS = {"statement", "short_remark", "funny"}
 
 
 @lru_cache(maxsize=1)
@@ -120,7 +123,7 @@ class VectorSpace:
 @dataclass
 class Reply:
     bubbles: list[str]
-    source: str                 # retrieval | intent | template | filler | llm | empty
+    source: str                 # retrieval | intent | template | filler | personality | llm
     score: float = 0.0
     matched_prompt: str | None = None
     intent: str | None = None
@@ -232,16 +235,15 @@ class PersonIndex:
             return pick_match()
 
         fillers = [f for f in self.fillers if f.strip().lower() not in recent] or self.fillers
-        if fillers:
-            if "?" in user_text:
-                answers = [f for f in fillers if ANSWER_LIKE.match(f)]
-                fillers = answers or fillers
+        if fillers and personality.classify_act(user_text) in FILLER_OK_ACTS:
             return Reply([rng.choice(fillers)], "filler", best, None, None,
                          note="No close match in the screenshots; used one of their short all-purpose replies.", embedder=kind)
 
-        generic = self.style["catchphrases"] or ["hmm", "tell me more"]
-        return Reply([style_mod.apply_style(rng.choice(generic), self.style, rng)], "empty", 0.0, None, None,
-                     note="Not enough chat data yet. Add more screenshots for better replies.", embedder=kind)
+        # Nothing real fits: write a sensible reply from their personality and style.
+        text, why = personality.compose(user_text, self.style, self.answers, rng, recent)
+        return Reply([text], "personality", best, None, None,
+                     note=f"No close match in the screenshots, so this was composed from their personality and writing style: {why}.",
+                     embedder=kind)
 
     # ---- optional local LLM (Ollama)
     def _persona_prompt(self, examples: list[tuple[str, list[str]]]) -> str:
