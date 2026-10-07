@@ -41,7 +41,8 @@ def classify_act(text: str) -> str:
     if re.search(r"^(can|could|will|would) (you|i)\b|\bplease\b|\bneed you to\b|\bhelp me\b|\b(pwede|puwede|pede|paki\w*|patulong|tulungan)\b", t):
         return "request"
     if "?" in t or re.match(rf"^({WH}|{YES_NO})", t):
-        return "yes_no" if re.match(rf"^{YES_NO}", t) else "wh"
+        # A question with no question word ("ok ka lang?", "you coming?") is a yes/no question.
+        return "wh" if re.search(rf"\b({WH}|({TL_WH})\b)", t) and not re.match(rf"^{YES_NO}", t) else "yes_no"
     # Tagalog questions rarely have a question mark: "miss mo ba ako", "san ka na"
     if re.search(rf"\b({TL_WH})\b", t):
         return "wh"
@@ -122,7 +123,7 @@ BANKS = {
         "calm":      ["i think so", "should be fine"],
     },
     "wh": {
-        "neutral":   ["good question", "hmm, let me think", "depends, why?"],
+        "neutral":   ["not sure honestly", "hmm i don't know, you?", "no idea haha, why?"],
         "logical":   ["it depends on a few things", "what's the context?"],
         "emotional": ["what made you think of that?", "why do you ask?"],
         "playful":   ["ooh good question", "okay why do you ask", "you're making me think"],
@@ -192,7 +193,7 @@ BANKS_TL = {
     "clarify":      ["wala hahaha", "de wala yun", "basta hahaha", "wala lang", "mahirap iexplain eh"],
     "doubt":        ["oo nga", "totoo nga", "seryoso nga", "de totoo", "oo nga hahaha"],
     "yes_no":       ["oo naman", "oo hahaha", "siguro", "depende, bakit?", "di pa eh"],
-    "wh":           ["hmm di ko sure eh, ikaw ano sa tingin mo?", "ewan ko rin eh hahaha", "di ko alam eh, bakit?", "pag isipan ko muna"],
+    "wh":           ["hmm di ko sure eh, ikaw ano sa tingin mo?", "ewan ko rin eh hahaha", "di ko alam eh, bakit?", "wala akong idea hahaha", "hmm ano ba sa tingin mo?"],
     "opinion":      ["pwede naman", "oks lang naman", "depende eh", "pag isipan muna natin"],
     "request":      ["sige, ano yun", "oo naman, ano yun", "sige lang", "sige sige, go"],
     "down":         ["bakit, ano nangyari", "pahinga ka muna", "andito lang ako", "kaya mo yan"],

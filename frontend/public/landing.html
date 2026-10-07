@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IMY — Miss mo na?</title>
+  <meta name="description" content="Use IMY to talk to them while still maintaining your self-respect." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        fontFamily: { sans: ['Inter', 'SF Pro Display', '-apple-system', 'Segoe UI', 'system-ui', 'sans-serif'] },
+        colors: { ink: '#0a0a0c', brand: { 500: '#3B82F6', 600: '#2563EB', glow: '#0052FF' }, cool: '#94A3B8' },
+      } },
+    };
+  </script>
+  <style>
+    body { background: #0a0a0c; }
+    .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+    .ambient { position: absolute; border-radius: 9999px; background: #0052FF; filter: blur(120px); opacity: .28; pointer-events: none; }
+    .glow-text { text-shadow: 0 0 60px rgba(59, 130, 246, .55), 0 0 18px rgba(59, 130, 246, .35); }
+    .btn-glow { box-shadow: 0 0 0 rgba(59, 130, 246, 0); transition: box-shadow .25s, transform .2s, background-color .2s; }
+    .btn-glow:hover { box-shadow: 0 0 32px rgba(59, 130, 246, .65); transform: translateY(-1px); }
+    .float { animation: float 7s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+
+    /* ---- chat mockup: each platform only sets variables; JS swaps data-platform ---- */
+    .phone { --bg: #000; --head: #000; --line: #262626; --ink: #f5f5f5; --sub: #a8a8a8; --field: #262626;
+             --me: linear-gradient(180deg, #a033ff, #3797f0); --me-ink: #fff; --them: #262626; --them-ink: #f5f5f5;
+             --r: 22px; --tail: 6px; --accent: #3797f0; --font: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+             background: var(--bg); color: var(--ink); font-family: var(--font); transition: background .45s, color .45s; }
+    .phone[data-platform="messenger"] { --bg: #000; --head: #000; --line: #242526; --ink: #e4e6eb; --sub: #b0b3b8; --field: #303030;
+             --me: #0084ff; --them: #303030; --them-ink: #e4e6eb; --r: 18px; --tail: 4px; --accent: #2e9bff; --font: 'Segoe UI', Helvetica, Arial, sans-serif; }
+    .phone[data-platform="imessage"] { --bg: #000; --head: #1c1c1e; --line: #38383a; --ink: #fff; --sub: #8e8e93; --field: #1c1c1e;
+             --me: #0a84ff; --them: #262628; --them-ink: #fff; --r: 19px; --tail: 4px; --accent: #0a84ff; --font: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+    .phone * { transition: background .45s, color .45s, border-color .45s, border-radius .45s; }
+    .phone .head { background: var(--head); border-bottom: 1px solid var(--line); }
+    .phone .sub { color: var(--sub); }
+    .phone .bubble { display: inline-block; max-width: 78%; padding: 8px 14px; border-radius: var(--r); font-size: 15px; line-height: 1.35; }
+    .phone .me { background: var(--me); color: var(--me-ink); border-bottom-right-radius: var(--tail); }
+    .phone .them { background: var(--them); color: var(--them-ink); border-bottom-left-radius: var(--tail); }
+    .phone .field { background: var(--field); border: 1px solid var(--line); color: var(--sub); }
+    .phone .accent { color: var(--accent); }
+    .phone .typed { color: var(--ink); }
+    .phone .caret { display: inline-block; width: 2px; height: 1.1em; margin-left: 1px; vertical-align: text-bottom; background: var(--accent); animation: caret 1.1s steps(1) infinite; }
+    @keyframes caret { 50% { opacity: 0; } }
+    .phone .dot { display: none; }   /* "Active 1h ago": not online */
+    .phone[data-platform="imessage"] .head { flex-direction: column; gap: 4px; padding-top: 12px; padding-bottom: 8px; text-align: center; }
+    .phone[data-platform="imessage"] .head .sub, .phone[data-platform="imessage"] .dot { display: none; }
+    .phone[data-platform="imessage"] .head .name { font-size: 12px; font-weight: 400; }
+    .phone[data-platform="imessage"] .head .icons { position: absolute; right: 14px; top: 18px; }
+    .phone .receipt { display: none; }
+    .phone[data-platform="imessage"] .receipt { display: block; }
+    .reaction { position: absolute; right: -10px; bottom: -12px; width: 26px; height: 26px; border-radius: 9999px; display: grid; place-items: center;
+                background: #1f1f23; border: 2px solid var(--bg, #0a0a0c); color: #cbd5e1; }
+    .tab[aria-selected="true"] { background: #2563EB; color: #fff; box-shadow: 0 0 22px rgba(37, 99, 235, .55); }
+    .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+    .reveal.in { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) { .float { animation: none; } .reveal { opacity: 1; transform: none; transition: none; } .phone, .phone * { transition: none; } }
+  </style>
+</head>
+<body class="font-sans text-white antialiased overflow-x-hidden">
+
+  <!-- ambient glow -->
+  <div aria-hidden="true" class="fixed inset-0 -z-10 overflow-hidden">
+    <div class="ambient w-[520px] h-[520px] -top-40 -left-32"></div>
+    <div class="ambient w-[460px] h-[460px] top-[38%] -right-40" style="opacity:.2"></div>
+    <div class="ambient w-[420px] h-[420px] bottom-[-180px] left-[30%]" style="opacity:.16"></div>
+  </div>
+
+  <!-- ===== header ===== -->
+  <header class="sticky top-0 z-40">
+    <div class="glass border-x-0 border-t-0">
+      <nav class="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between gap-4" aria-label="Main">
+        <a href="#top" class="flex items-center gap-3 shrink-0">
+          <!-- logo: dark pill bubble "i miss you" + smiley-plus reaction -->
+          <span class="relative inline-flex items-center rounded-full bg-[#1c1c20] border border-white/10 px-3 py-1 text-[11px] font-medium leading-none text-white">
+            i miss you
+            <span class="reaction" style="width:16px;height:16px;right:-6px;bottom:-7px;border-width:1.5px">
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.500" cy="13" r="7.500"/><path d="M7.700 14.700a3.600 3.600 0 0 0 5.600 0M8.200 11v.1M12.800 11v.1M19 2v6M16 5h6"/></svg>
+            </span>
+          </span>
+          <span class="text-lg font-extrabold tracking-tight">IMY</span>
+        </a>
+        <div class="hidden md:flex items-center gap-8 text-sm text-cool">
+          <a class="hover:text-white transition-colors" href="#features">Features</a>
+          <a class="hover:text-white transition-colors" href="#how">How It Works</a>
+          <a class="hover:text-white transition-colors" href="#privacy">Privacy</a>
+          <a class="hover:text-white transition-colors" href="#faq">FAQ</a>
+        </div>
+        <div class="flex items-center gap-2">
+          <a href="/" class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-5 py-2 text-sm font-semibold">Start Chatting</a>
+          <button id="menuBtn" class="md:hidden glass rounded-full w-10 h-10 grid place-items-center" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+        </div>
+      </nav>
+      <div id="mobileMenu" class="hidden md:hidden px-5 pb-4 text-sm text-cool">
+        <a class="block py-2 hover:text-white" href="#features">Features</a>
+        <a class="block py-2 hover:text-white" href="#how">How It Works</a>
+        <a class="block py-2 hover:text-white" href="#privacy">Privacy</a>
+        <a class="block py-2 hover:text-white" href="#faq">FAQ</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ===== hero ===== -->
+    <section class="mx-auto max-w-6xl px-5 pt-16 pb-20 md:pt-24 md:pb-28 grid lg:grid-cols-2 gap-14 items-center">
+      <div>
+        <p class="inline-flex items-center gap-2 glass rounded-full px-3 py-1 text-xs text-cool mb-6">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span> A safer place for the message you almost sent
+        </p>
+        <h1 class="text-6xl sm:text-7xl lg:text-8xl font-extrabold tracking-tight leading-[0.95]">
+          Miss mo na?
+        </h1>
+        <p class="mt-6 text-lg sm:text-xl text-cool leading-relaxed max-w-xl">
+          Use <strong class="text-white font-semibold">IMY</strong> to talk to them while still maintaining your self-respect.
+        </p>
+        <div class="mt-9 flex flex-wrap gap-3">
+          <a href="/" class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Try Demo</a>
+          <a href="/" class="glass rounded-full px-7 py-3 font-semibold hover:bg-white/10 transition-colors">Upload Screenshot</a>
+        </div>
+        <p class="mt-5 text-sm text-cool/80">IMY copies how someone writes. It isn’t them.</p>
+      </div>
+
+      <!-- hero visual: interactive mockup -->
+      <div class="relative">
+        <div class="float glass rounded-[28px] p-4 sm:p-5 max-w-md mx-auto">
+          <div role="tablist" aria-label="Chat platform" class="glass rounded-full p-1 grid grid-cols-3 text-xs sm:text-sm font-medium text-cool mb-4">
+            <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="false" data-platform="messenger">Messenger</button>
+            <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="true" data-platform="instagram">Instagram DMs</button>
+            <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="false" data-platform="imessage">iMessage</button>
+          </div>
+
+          <div id="phone" class="phone rounded-[22px] overflow-hidden border border-white/10" data-platform="instagram" role="tabpanel" aria-live="polite">
+            <div class="head relative flex items-center gap-3 px-4 py-3">
+              <span class="relative w-9 h-9 rounded-full bg-gradient-to-b from-slate-400 to-slate-600 grid place-items-center text-xs font-semibold text-white shrink-0">L
+                <span class="dot absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-black"></span>
+              </span>
+              <div class="min-w-0 flex-1">
+                <div class="name text-base leading-tight" aria-label="Their name">💗</div>
+                <div id="status" class="sub text-xs">Active 1h ago</div>
+              </div>
+              <div class="icons accent flex gap-3">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.500" width="12" height="11" rx="2.500"/><path d="M15 10.500l5.500-3v9l-5.500-3z"/></svg>
+              </div>
+            </div>
+            <div class="px-4 py-5 space-y-2 min-h-[230px]">
+              <div class="flex"><span class="bubble them">Sorry haha, di ko pa kaya mag commit sa relationship.</span></div>
+              <div class="flex justify-end"><span class="bubble me">Yeah, it’s okay. I understand.</span></div>
+              <div class="receipt text-right text-[11px] sub pr-1">Delivered</div>
+            </div>
+            <div class="px-3 pb-3">
+              <!-- the message you typed but didn't send -->
+              <div class="field rounded-full px-4 py-2 text-sm"><span class="typed">i miss you</span><span class="caret" aria-hidden="true"></span></div>
+            </div>
+          </div>
+          <p class="mt-3 text-center text-xs text-cool">Tap a platform. The chat changes to match.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== features ===== -->
+    <section id="features" class="mx-auto max-w-6xl px-5 py-20 scroll-mt-20">
+      <h2 class="reveal text-3xl sm:text-4xl font-bold tracking-tight">Built to feel familiar</h2>
+      <p class="reveal mt-3 text-cool max-w-2xl">Everything about the conversation looks and sounds the way you remember it, without the message ever leaving your side.</p>
+      <div class="mt-10 grid md:grid-cols-3 gap-5">
+        <article class="reveal glass rounded-3xl p-7 hover:bg-white/[0.06] transition-colors">
+          <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M8 10h8M8 14h5"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold">OCR &amp; Screenshot Intelligence</h3>
+          <p class="mt-2 text-cool leading-relaxed">Automatically detects platform layout, separating actual message bubbles from pinned messages, header bars, and system notifications.</p>
+        </article>
+        <article class="reveal glass rounded-3xl p-7 hover:bg-white/[0.06] transition-colors">
+          <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="3"/><path d="M9 8h4M9 12h6M11 17h2"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold">Platform UI Matching</h3>
+          <p class="mt-2 text-cool leading-relaxed">Dynamically updates the chat theme to look and feel exactly like Messenger, IG DMs, or iMessage.</p>
+        </article>
+        <article class="reveal glass rounded-3xl p-7 hover:bg-white/[0.06] transition-colors">
+          <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.500c0 4.300-2.900 7.700-7 9.500-4.100-1.800-7-5.200-7-9.500V6z"/><path d="M9 12l2.200 2.200L15.200 10"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold">Dignity First</h3>
+          <p class="mt-2 text-cool leading-relaxed">Talk through your feelings, gain closure, and process emotions without breaking contact or sending messages you might regret.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ===== how it works ===== -->
+    <section id="how" class="mx-auto max-w-6xl px-5 py-20 scroll-mt-20">
+      <h2 class="reveal text-3xl sm:text-4xl font-bold tracking-tight">How it works</h2>
+      <ol class="mt-10 grid md:grid-cols-3 gap-5">
+        <li class="reveal glass rounded-3xl p-7 relative">
+          <span class="text-5xl font-extrabold text-brand-500/30">01</span>
+          <h3 class="mt-3 text-lg font-semibold">Answer Questions</h3>
+          <p class="mt-2 text-cool leading-relaxed">Fill out a quick interactive setup questionnaire about your relationship dynamic.</p>
+        </li>
+        <li class="reveal glass rounded-3xl p-7 relative">
+          <span class="text-5xl font-extrabold text-brand-500/30">02</span>
+          <h3 class="mt-3 text-lg font-semibold">Upload Past Chats</h3>
+          <p class="mt-2 text-cool leading-relaxed">Drop in chat screenshots—our vision model extracts tone, slang, and formatting while filtering out header/system clutter.</p>
+        </li>
+        <li class="reveal glass rounded-3xl p-7 relative">
+          <span class="text-5xl font-extrabold text-brand-500/30">03</span>
+          <h3 class="mt-3 text-lg font-semibold">Safe Dynamic Chat</h3>
+          <p class="mt-2 text-cool leading-relaxed">Converse in a familiar interface tailored to your preferred platform theme.</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ===== privacy ===== -->
+    <section id="privacy" class="mx-auto max-w-6xl px-5 py-20 scroll-mt-20">
+      <div class="reveal glass rounded-3xl p-8 md:p-12 grid md:grid-cols-[1.2fr_1fr] gap-10 items-center">
+        <div>
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Your chats stay yours</h2>
+          <p class="mt-4 text-cool leading-relaxed">IMY runs on your own computer. Screenshots, messages and answers are stored there, and nothing is ever sent to the person you’re missing.</p>
+        </div>
+        <ul class="space-y-3 text-sm text-cool">
+          <li class="flex gap-3"><span class="text-brand-500">●</span> Stored locally in a single file you can delete any time.</li>
+          <li class="flex gap-3"><span class="text-brand-500">●</span> Optional AI mode sends your data to the AI provider only if you add your own key.</li>
+          <li class="flex gap-3"><span class="text-brand-500">●</span> One click removes a person and everything learned about them.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== faq ===== -->
+    <section id="faq" class="mx-auto max-w-3xl px-5 py-20 scroll-mt-20">
+      <h2 class="reveal text-3xl sm:text-4xl font-bold tracking-tight text-center">FAQ</h2>
+      <div class="mt-10 space-y-3">
+        <details class="reveal glass rounded-2xl px-6 py-4 group">
+          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Is this actually them? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
+          <p class="mt-3 text-cool leading-relaxed">No. IMY imitates how they write, based on what you give it. It can’t know what they think or feel, and it never contacts them.</p>
+        </details>
+        <details class="reveal glass rounded-2xl px-6 py-4 group">
+          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Which chat apps can it look like? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
+          <p class="mt-3 text-cool leading-relaxed">Messenger, Instagram DMs, iMessage, WhatsApp and Telegram, each in light or dark.</p>
+        </details>
+        <details class="reveal glass rounded-2xl px-6 py-4 group">
+          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">How many screenshots do I need? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
+          <p class="mt-3 text-cool leading-relaxed">Around ten gives it enough to pick up their tone. You can also paste chat text, which keeps emojis.</p>
+        </details>
+        <details class="reveal glass rounded-2xl px-6 py-4 group">
+          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Is this a replacement for talking to someone? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
+          <p class="mt-3 text-cool leading-relaxed">No. It’s a place to say what you need to say. If missing someone is weighing on you, a friend or a counsellor can help in ways an app can’t.</p>
+        </details>
+      </div>
+      <div class="reveal mt-14 text-center">
+        <a href="/" class="btn-glow inline-block rounded-full bg-brand-600 hover:bg-brand-500 px-8 py-3.5 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Start Chatting</a>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== footer ===== -->
+  <footer class="border-t border-white/[0.08]">
+    <div class="mx-auto max-w-6xl px-5 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-cool">
+      <p>© <span id="year"></span> IMY. Preserving your peace of mind.</p>
+      <a href="#privacy" class="hover:text-white transition-colors">Privacy Policy</a>
+    </div>
+  </footer>
+
+  <script>
+    // ---- platform switcher: swap the mockup's skin + a few words ----
+    const PLATFORMS = {
+      messenger: { status: 'Active 1h ago' },
+      instagram: { status: 'Active 1h ago' },
+      imessage:  { status: '' },
+    };
+    const phone = document.getElementById('phone');
+    const tabs = [...document.querySelectorAll('.tab')];
+    function setPlatform(id) {
+      const p = PLATFORMS[id];
+      phone.dataset.platform = id;
+      document.getElementById('status').textContent = p.status;
+      tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.platform === id)));
+    }
+    tabs.forEach((t, i) => {
+      t.addEventListener('click', () => setPlatform(t.dataset.platform));
+      t.addEventListener('keydown', (e) => {            // arrow keys move between tabs
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+        next.focus(); setPlatform(next.dataset.platform);
+      });
+    });
+
+    // ---- mobile menu ----
+    const menuBtn = document.getElementById('menuBtn'), menu = document.getElementById('mobileMenu');
+    menuBtn.addEventListener('click', () => menuBtn.setAttribute('aria-expanded', String(!menu.classList.toggle('hidden'))));
+    menu.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => { menu.classList.add('hidden'); menuBtn.setAttribute('aria-expanded', 'false'); }));
+
+    // ---- reveal on scroll ----
+    const io = new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: 0.12 });
+    document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>

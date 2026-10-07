@@ -13,9 +13,9 @@ export default function App() {
   const [mode, setMode] = useState("chat");
   const [trainId, setTrainId] = useState(null);
   const [error, setError] = useState("");
-  // Light or dark: remembered in this browser; the first visit follows the computer's setting.
+  // Light or dark: remembered in this browser.
   const [theme, setTheme] = useState(() => localStorage.getItem("imy.theme")
-    || (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    || "dark");   // dark is the brand look (same as the landing page)
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("imy.theme", theme);

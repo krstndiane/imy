@@ -7,7 +7,17 @@ export function initials(name = "") {
 export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onTheme }) {
   return (
     <aside className="sidebar">
-      <div className="brand">imy</div>
+      <a className="brand" href="/landing.html" title="About IMY" style={{ color: "inherit", textDecoration: "none" }}>
+        <span className="logo-pill">
+          i miss you
+          <i aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <circle cx="10.5" cy="13" r="7.5" /><path d="M7.7 14.7a3.6 3.6 0 0 0 5.600 0M8.200 11v.1M12.800 11v.1M19 2v6M16 5h6" />
+            </svg>
+          </i>
+        </span>
+        IMY
+      </a>
       <button className="btn primary block" onClick={onNew}>Create new person</button>
       <nav className="people" aria-label="People">
         {persons.length === 0 && <p className="muted small">No one yet. Create a person to get started.</p>}

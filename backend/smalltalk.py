@@ -56,6 +56,13 @@ RULES = [
     ("bye", r"\b(bye+|babye|alis na ako|una na ako|see you|brb|ttyl|talk later|mamaya na lang)\b",
      ["sige ingat{e}", "sige, chat ka pag free ka", "ingat ka"], ["okay, take care{e}", "sure, talk later"]),
 
+    ("you_ok", r"\b(ok(ay)? ka (lang|ba|pa)|ayos ka (lang|ba)|are (you|u) (ok(ay)?|alright|good)|(you|u) ok(ay)?|you good)\b",
+     ["oo okay lang ako{e}, ikaw?", "oo naman, bakit?", "okay lang, ikaw okay ka lang?"],
+     ["yeah i'm okay{e}, you?", "i'm fine, why?", "all good, are you okay?"]),
+    ("busy_q", r"\b(galit ka( ba)?|are you mad|mad at me|tampo ka( ba)?|nagtatampo ka)\b",
+     ["hindi ah, bakit naman", "di naman{e}, bakit mo naisip yan?"], ["no, why would i be", "not at all{e}, why do you think that?"]),
+    ("remember", r"\b(naaalala mo|natatandaan mo|tanda mo( pa)?|do you remember|remember (when|that|me))\b",
+     ["oo naman, bakit?", "medyo hahaha, ano ulit yun?"], ["of course, why?", "kind of haha, remind me?"]),
     ("how_are_you", r"\b(how are you|how r u|how('?s| is) (it going|everything|your day)|hbu|wbu|(k[au])?musta|what'?s up|sup)\b",
      ["okay lang naman{e}, ikaw?", "oks lang{e}, ikaw kamusta", "eto buhay pa hahaha, ikaw?"],
      ["i'm good{e}, how about you?", "doing okay{e}. you?"]),
@@ -70,7 +77,12 @@ RULES = [
     ("awake", r"\b(are you (still )?(awake|up)|still up|gising ka pa|tulog ka na ba)\b",
      ["oo gising pa{e}, ikaw?", "gising pa, bakit?"], ["yeah still up{e}, you?", "still up, why?"]),
     ("free", r"\b(busy ka( ba)?|free ka( ba)?|are you (busy|free)|may ginagawa ka( ba)?)\b",
-     ["di naman, bakit?", "free naman ako, ano yun?"], ["not really, why?", "i'm free, what's up?"]),
+     ["free naman ako, bakit?", "oo free ako, ano meron?"], ["i'm free, why?", "yeah i'm free, what's up?"]),
+    ("why_didnt", r"\b(bakit|bkt) (di|hindi|hinde) (ka|mo)\b|\bwhy (didn'?t|did not|don'?t|haven'?t) (you|u)\b",
+     ["sorry{e}, naging busy lang", "di ko napansin eh, sorry", "sorry na, babawi ako"],
+     ["sorry{e}, i got busy", "i didn't notice, sorry", "my bad, i'll make it up to you"]),
+    ("offer", r"\bgusto mo (ba )?(ng|mag|ng? ?kumain|sumama)\b|\b(do you want|want (some|to)|wanna)\b",
+     ["sige, g", "oo naman, tara", "pwede rin hahaha"], ["sure, i'm down", "yeah, let's", "why not haha"]),
 
     ("advice", r"\b(dapat ko(ng)? gawin|ano(ng)? gagawin ko|what should i do|what do i do|payo|advice)\b",
      ["hmm kausapin mo muna nang maayos", "pag isipan mo muna bago ka mag decide", "ikaw, ano ba gusto mo mangyari?"],
@@ -129,6 +141,8 @@ RULES = [
     ("laugh", rf"^(?=.*{LAUGH})(\W*\w+){{1,5}}\W*$",
      ["hahaha", "hahaha totoo", "loko hahaha"], ["hahaha", "lol", "haha stop"]),
 ]
+# These rules react to something you tell them; they make no sense as an answer to a question.
+STATEMENT_ONLY = {"food", "school_work", "weather", "sleepy", "hungry", "good_news", "compliment", "bored"}
 COMPILED = [(name, re.compile(rx, re.I), tl, en) for name, rx, tl, en in RULES]
 # After the user answers something we asked, acknowledge it instead of firing another question.
 ACK_TL = ["ah oks oks", "ahh gets", "nice naman", "buti naman"]
@@ -143,6 +157,7 @@ def covers(user_text: str) -> bool:
 def reply(user_text: str, history: list[dict], st: dict, answers: dict, name: str, rng, recent=()) -> tuple[str, str] | None:
     """Returns (text with {e} still in it, why) or None when no rule covers the message."""
     t = user_text.strip()
+    asking = "?" in t or bool(re.search(r"\bba\b", t, re.I))
     tagalog = bool(st.get("tagalog"))
     last = next((h["text"] for h in reversed(history) if h["role"] == "person"), "")
     now = datetime.now()
@@ -152,6 +167,8 @@ def reply(user_text: str, history: list[dict], st: dict, answers: dict, name: st
     }
     for rule, rx, tl, en in COMPILED:
         if not rx.search(t) or (rule == "age" and not fill["age"]):
+            continue
+        if rule in STATEMENT_ONLY and asking:   # "kumain ako" is news; "gusto mo ng kape?" is a question
             continue
         lines = tl if tagalog else en
         if last.rstrip().endswith("?"):   # we just asked something: don't answer with another question
