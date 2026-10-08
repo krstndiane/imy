@@ -48,4 +48,5 @@ export const api = {
   say: (id, message) => send("POST", `/api/persons/${id}/chat`, { message }),
   clearChat: (id) => send("DELETE", `/api/persons/${id}/chat`),
   style: (id) => send("GET", `/api/persons/${id}/style`),
+  guesses: (id) => send("GET", `/api/persons/${id}/guesses`),   // "imy noticed…" cards for the interview
 };

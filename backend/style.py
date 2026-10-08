@@ -36,6 +36,8 @@ def interview_prefs(answers: dict) -> dict:
              "short" if re.search(r"short|brief|few words|one[- ]liner|quick", q11) else None
     if re.search(r"\bno emoji|never use emoji|don'?t use emoji|without emoji", q12):
         emoji = "none"
+    elif re.search(r"\bsome emoji|a few emoji", q12):
+        emoji = "some"
     elif "emoji" in q12:
         emoji = "heavy"
     else:
@@ -43,6 +45,15 @@ def interview_prefs(answers: dict) -> dict:
     formality = "formal" if re.search(r"formal|proper|polite", q12 + " " + q15) and "informal" not in q12 else \
                 "casual" if re.search(r"casual|slang|chill|informal", q12 + " " + q15) else None
     tone = next((t for t in ("playful", "blunt", "casual", "formal") if t in q15), None)
+
+    # "This or that" taps from the newer interview (used when there isn't much chat data yet).
+    case = low("x_case")
+    case_pref = "lower" if "lowercase" in case else "proper" if "proper" in case else None
+    laugh_raw = (answers.get("x_laugh") or "").strip()
+    laugh_pref = None if not laugh_raw or "don't" in laugh_raw.lower() else laugh_raw.split(" / ")[0]
+    lang = low("x_lang")
+    tagalog_pref = (True if re.search(r"taglish|tagalog", lang) else False if lang else None)
+    fav_emojis = EMOJI_RE.findall(answers.get("x_emoji_fav") or "")
     return {
         "length_pref": length,
         "emoji_pref": emoji,
@@ -51,6 +62,11 @@ def interview_prefs(answers: dict) -> dict:
         "humor": (answers.get("q14") or "").strip() or None,
         "endearments": _split_list(answers.get("q3", "")),
         "catchphrases": _split_list(answers.get("q13", "")),
+        "case_pref": case_pref,
+        "laugh_pref": laugh_pref,
+        "tagalog_pref": tagalog_pref,
+        "fav_emojis": fav_emojis,
+        "never_say": [p.lower() for p in _split_list(answers.get("x_never", ""))],
     }
 
 
@@ -108,13 +124,24 @@ def build_style(texts: list[str], answers: dict | None = None) -> dict:
         hits = sum(any(re.search(rf"\b{re.escape(e.lower())}\b", t.lower()) for e in ends) for t in texts)
         style["endearment_rate"] = round(hits / n, 2) if n >= 15 else 0.3
     else:
-        style["endearment_rate"] = 0.0
+        style["endearment_rate"] = 0.3 if ends else 0.0
 
     # Effective emoji rate: trust the data once there's enough of it, else the interview.
     if n >= 15:
         style["emoji_rate_eff"] = style["emoji_ratio"]
     else:
-        style["emoji_rate_eff"] = {"heavy": 0.5, "none": 0.0}.get(prefs["emoji_pref"], 0.15)
+        style["emoji_rate_eff"] = {"heavy": 0.5, "some": 0.2, "none": 0.0}.get(prefs["emoji_pref"], 0.15)
+
+    # Not enough real messages yet? Fill the gaps from the interview taps.
+    if n < 15:
+        if prefs["case_pref"] == "lower":
+            style["lowercase_start"], style["end_punct"] = 0.95, 0.1
+        elif prefs["case_pref"] == "proper":
+            style["lowercase_start"], style["end_punct"] = 0.05, 0.8
+    if not style["laugh"] and prefs["laugh_pref"]:
+        style["laugh"] = prefs["laugh_pref"]
+    if not style["top_emojis"] and prefs["fav_emojis"]:
+        style["top_emojis"] = prefs["fav_emojis"][:4]
     return style
 
 
@@ -126,7 +153,7 @@ def describe_style(st: dict) -> list[str]:
         out.append(f"Usually writes {kind} (typically {int(st['median_words'])} words; {st['n_messages']} messages analysed).")
     elif st.get("length_pref"):
         out.append(f"Writes {st['length_pref']} messages (from the interview).")
-    if st["lowercase_start"] is not None and st["n_messages"] >= 5:
+    if st["lowercase_start"] is not None and (st["n_messages"] >= 5 or st.get("case_pref")):
         out.append("Mostly starts messages in lowercase." if st["lowercase_start"] >= 0.7 else
                    "Usually capitalises the first word." if st["lowercase_start"] <= 0.25 else "Mixes lowercase and capitals.")
         out.append("Rarely ends with a full stop." if st["end_punct"] <= 0.3 else "Often ends with punctuation.")
@@ -163,14 +190,14 @@ def apply_style(text: str, st: dict, rng) -> str:
     if not t:
         return t
     lc = st.get("lowercase_start")
-    if lc is not None and st["n_messages"] >= 5:
+    if lc is not None and (st["n_messages"] >= 5 or st.get("case_pref")):
         if lc >= 0.7:
             t = t[0].lower() + t[1:]
             if lc >= 0.85:
                 t = re.sub(r"\bI\b", "i", t)
         elif lc <= 0.25:
             t = t[0].upper() + t[1:]
-    if st["n_messages"] >= 5 and st["end_punct"] <= 0.3:
+    if (st["n_messages"] >= 5 or st.get("case_pref")) and st["end_punct"] <= 0.3:
         t = t.rstrip(".")
     if st["top_emojis"] and not EMOJI_RE.search(t) and rng.random() < st["emoji_rate_eff"]:
         t += " " + rng.choice(st["top_emojis"])

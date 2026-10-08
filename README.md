@@ -4,7 +4,7 @@ Teach an app how someone writes, then chat with that style again.
 Everything runs on your own computer. No Claude or other cloud API is used.
 
 **Two modes**
-- **Training:** answer 21 questions, upload chat screenshots (or paste text), check what was read, save.
+- **Training:** 4 quick basics, then add chats (import a chat export, upload screenshots or paste text), check what was read, then "Get to know them": one question per screen (confirm what imy noticed, this-or-that taps, "how would they reply?", little details). Questions live in `backend/questions.json`; "how would they reply?" answers become training examples the engine uses first.
 - **Chat:** pick a person and talk. Replies come from their *real* past messages, matched to what you say and shaped by their style.
 
 ---

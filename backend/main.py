@@ -79,7 +79,7 @@ def _known_names(answers: dict) -> list[str]:
 
 def _messages_for_engine(conn, pid: int) -> list[dict]:
     rows = conn.execute(
-        "SELECT m.* FROM messages m JOIN screenshots s ON s.id = m.screenshot_id "
+        "SELECT m.*, s.platform AS shot_platform FROM messages m JOIN screenshots s ON s.id = m.screenshot_id "
         "WHERE m.person_id = ? ORDER BY s.id, m.position", (pid,)).fetchall()
     return [dict(r) for r in rows]
 
@@ -90,7 +90,7 @@ def _person_for_engine(conn, pid: int) -> dict:
     if person.get("platform"):  # chosen by the user in setup
         return person
     row = conn.execute(
-        "SELECT platform FROM screenshots WHERE person_id = ? AND platform NOT IN ('unknown', 'text-import') "
+        "SELECT platform FROM screenshots WHERE person_id = ? AND platform NOT IN ('unknown', 'text-import', 'practice') "
         "GROUP BY platform ORDER BY COUNT(*) DESC LIMIT 1", (pid,)).fetchone()
     person["platform"] = row["platform"] if row else "unknown"
     return person
@@ -133,6 +133,28 @@ def _check_platform(platform: str | None) -> None:
         raise HTTPException(400, "Unknown platform.")
 
 
+def _reply_prompts() -> dict:
+    """{question id: the message shown as yours} for every 'reply' question in questions.json."""
+    data = json.loads((Path(__file__).parent / "questions.json").read_text())
+    return {q["id"]: q["prompt"] for s in data["sections"] for q in s["questions"] if q.get("type") == "reply"}
+
+
+def _sync_practice(conn, pid: int, answers: dict) -> None:
+    """Turn 'If you texted X, they'd reply ___' answers into exchanges the engine learns from."""
+    conn.execute("DELETE FROM screenshots WHERE person_id = ? AND platform = 'practice'", (pid,))
+    pairs = [(prompt, answers[qid].strip()) for qid, prompt in _reply_prompts().items() if (answers.get(qid) or "").strip()]
+    if not pairs:
+        return
+    cur = conn.execute(
+        "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
+        (pid, "How they'd reply (interview)", None, "practice", "", now()))
+    msgs = []
+    for prompt, reply in pairs:
+        msgs += [{"speaker": "user", "text": prompt}] + [{"speaker": "person", "text": line.strip()}
+                                                         for line in reply.splitlines() if line.strip()]
+    _store_messages(conn, pid, cur.lastrowid, msgs)
+
+
 @app.get("/api/persons")
 def list_persons():
     with db() as conn:
@@ -148,6 +170,7 @@ def create_person(body: AnswersIn):
         cur = conn.execute(
             "INSERT INTO persons (name, answers, platform, created_at, updated_at) VALUES (?,?,?,?,?)",
             (_name_from_answers(body.answers), json.dumps(body.answers), body.platform or "", ts, ts))
+        _sync_practice(conn, cur.lastrowid, body.answers)
         return _person_summary(conn, _person_row(conn, cur.lastrowid))
 
 
@@ -164,6 +187,7 @@ def update_person(pid: int, body: AnswersIn):
         _person_row(conn, pid)
         conn.execute("UPDATE persons SET name = ?, answers = ?, platform = COALESCE(?, platform) WHERE id = ?",
                      (_name_from_answers(body.answers), json.dumps(body.answers), body.platform, pid))
+        _sync_practice(conn, pid, body.answers)
         bump_version(conn, pid)
         return _person_summary(conn, _person_row(conn, pid))
 
@@ -345,7 +369,9 @@ def import_commit(pid: int, body: ImportCommitIn):
 def list_screenshots(pid: int):
     with db() as conn:
         _person_row(conn, pid)
-        shots = conn.execute("SELECT * FROM screenshots WHERE person_id = ? ORDER BY id", (pid,)).fetchall()
+        # "practice" = the interview's "how would they reply?" answers; they're edited in the interview, not here
+        shots = conn.execute("SELECT * FROM screenshots WHERE person_id = ? AND platform != 'practice' ORDER BY id",
+                             (pid,)).fetchall()
         return [_shot_out(conn, s) for s in shots]
 
 
@@ -464,6 +490,53 @@ def clear_chat(pid: int):
         _person_row(conn, pid)
         conn.execute("DELETE FROM chat_messages WHERE person_id = ?", (pid,))
     return {"ok": True}
+
+
+ENDEARMENTS = ["love", "babe", "baby", "bby", "bebe", "beb", "mahal", "mhie", "hon", "honey", "beh", "bes", "besh",
+               "sis", "mars", "bro", "pre", "dude", "bub", "bubba", "lab", "langga", "palangga"]
+
+
+@app.get("/api/persons/{pid}/guesses")
+def get_guesses(pid: int):
+    """'imy noticed…' cards for the interview: things measured from the real messages.
+    Each says which answer to fill in if you confirm it (mode 'add' appends to a comma list)."""
+    with db() as conn:
+        person = _person_for_engine(conn, pid)
+        msgs = [m for m in _messages_for_engine(conn, pid) if m.get("shot_platform") != "practice"]
+    texts = [m["text"] for m in msgs if m["speaker"] == "person"]
+    if len(texts) < 10:
+        return []
+    st = style_mod.build_style(texts, {})
+    answers = person["answers"]
+    has = lambda qid, v: v.lower() in (answers.get(qid) or "").lower()
+    out = []
+    low = [t.lower() for t in texts]
+    counts = {e: sum(bool(re.search(rf"\b{e}\b", t)) for t in low) for e in ENDEARMENTS}
+    for e, c in sorted(counts.items(), key=lambda kv: -kv[1])[:2]:
+        if c >= 3 and not has("q3", e):
+            out.append({"id": f"end_{e}", "text": f"They call you “{e}” a lot", "field": "q3", "value": e, "mode": "add"})
+    if st["laugh"] and not answers.get("x_laugh"):
+        out.append({"id": "laugh", "text": f"They laugh with “{st['laugh']}”", "field": "x_laugh", "value": st["laugh"], "mode": "set"})
+    if st["lowercase_start"] is not None and st["lowercase_start"] >= 0.75 and not answers.get("x_case"):
+        out.append({"id": "case", "text": "They type in all lowercase", "field": "x_case", "value": "all lowercase, no periods", "mode": "set"})
+    if not answers.get("q11"):
+        if st["median_words"] <= 5:
+            out.append({"id": "len", "text": "They text in short, quick messages", "field": "q11",
+                        "value": "Short, quick messages, never much", "mode": "set"})
+        elif st["median_words"] > 16:
+            out.append({"id": "len", "text": "They write long paragraphs", "field": "q11", "value": "One long paragraph", "mode": "set"})
+    if st["top_emojis"] and st["emoji_ratio"] >= 0.1 and not answers.get("x_emoji_fav"):
+        fav = " ".join(st["top_emojis"][:3])
+        out.append({"id": "emoji", "text": f"Their favorite emojis: {fav}", "field": "x_emoji_fav", "value": fav, "mode": "set"})
+    elif st["emoji_ratio"] < 0.03 and not answers.get("q12"):
+        out.append({"id": "noemoji", "text": "They barely use emojis", "field": "q12", "value": "No emojis, ever", "mode": "set"})
+    tl = sum(bool(engine.TAGALOG_RE.search(t)) for t in texts) / len(texts)
+    if tl >= 0.25 and not answers.get("x_lang"):
+        out.append({"id": "lang", "text": "They text in Taglish", "field": "x_lang", "value": "Taglish", "mode": "set"})
+    for phrase, _ in st["top_phrases"][:2]:
+        if not has("q13", phrase):
+            out.append({"id": f"phrase_{phrase}", "text": f"They often say “{phrase}”", "field": "q13", "value": phrase, "mode": "add"})
+    return out
 
 
 @app.get("/api/persons/{pid}/style")

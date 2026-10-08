@@ -1,54 +1,85 @@
 {
+  "_readme": "The interview, one question per screen. stage 'basics' = asked before chats (only q1 and q5 are required); stage 'deep' = 'Get to know them', asked after chats. Types: short | long | choice (options, tap one; 'other' adds a free-text box) | reply (shows 'prompt' as your message; the answer is how they'd reply, and becomes a training example). Keep existing ids: backend code reads q1-q21 (see style.py, personality.py, smalltalk.py). Answers to every id are also given to the optional AI modes as facts.",
   "sections": [
     {
-      "title": "Demographic profile",
+      "title": "The basics",
+      "stage": "basics",
       "questions": [
-        {"id": "q1", "text": "What's their real name?", "type": "short"},
-        {"id": "q2", "text": "Do they have a nickname or what do you call them?", "type": "short"},
-        {"id": "q3", "text": "What's an endearment they use for you?", "hint": "e.g. \"love\", \"babe\", \"sis\"", "type": "short"},
-        {"id": "q4", "text": "How old are they (or age range)?", "type": "short"},
-        {"id": "q5", "text": "One-line description of who they are to you?", "type": "short"}
+        {"id": "q1", "text": "First, what's their name?", "type": "short", "required": true, "placeholder": "Their real name"},
+        {"id": "q2", "text": "What do you call them?", "hint": "A nickname, or just their name.", "type": "short", "placeholder": "e.g. bub, kuya, Migs"},
+        {"id": "q3", "text": "And what do they call you?", "hint": "Every endearment counts. Separate with commas.", "type": "short", "placeholder": "e.g. love, bebe, sis"},
+        {"id": "q5", "text": "Who are they to you?", "type": "choice", "required": true, "other": true,
+         "options": ["Boyfriend / girlfriend", "Ex", "Situationship", "Crush", "Best friend", "Family", "A friend who passed away"]}
       ]
     },
     {
-      "title": "Personality & mindset",
+      "title": "This or that",
+      "stage": "deep",
       "questions": [
-        {"id": "q6", "text": "How would you describe their personality in 3 words?", "type": "short"},
-        {"id": "q7", "text": "What do they care about the most?", "type": "short"},
-        {"id": "q8", "text": "Are they more logical or emotional when making decisions?", "type": "short"},
-        {"id": "q9", "text": "What's something they're usually thinking about or worried about?", "type": "short"},
-        {"id": "q10", "text": "How do they typically react to situations in general?", "type": "short"}
+        {"id": "q15", "text": "In chat, they usually come across as…", "type": "choice", "other": true,
+         "options": ["Playful & teasing", "Sweet & caring", "Chill & casual", "Blunt & straight to the point", "Formal & polite"]},
+        {"id": "x_laugh", "text": "How do they laugh in text?", "type": "choice", "other": true,
+         "options": ["haha", "HAHAHA", "hahahahahaha", "lol / lmao", "😂", "They don't, really"]},
+        {"id": "x_case", "text": "Their typing style?", "type": "choice",
+         "options": ["all lowercase, no periods", "Proper Capitals And Periods.", "A mix of both"]},
+        {"id": "q11", "text": "When they have a lot to say, they send…", "type": "choice",
+         "options": ["Lots of short messages in a row", "One long paragraph", "Short, quick messages, never much"]},
+        {"id": "q12", "text": "Emojis?", "type": "choice",
+         "options": ["Lots of emojis", "Some emojis", "No emojis, ever", "Stickers & GIFs instead"]},
+        {"id": "x_lang", "text": "What language do they text in?", "type": "choice", "other": true,
+         "options": ["English", "Taglish", "Mostly Tagalog", "Bisaya / another language"]},
+        {"id": "x_speed", "text": "How fast do they reply?", "type": "choice",
+         "options": ["In seconds", "Within the hour", "Leaves me on seen for hours", "Depends on the mood"]},
+        {"id": "q8", "text": "When deciding something, they're more…", "type": "choice",
+         "options": ["Logical: thinks it through", "Emotional: goes with their heart", "A bit of both (logical and emotional)"]},
+        {"id": "q10", "text": "When something goes wrong, they…", "type": "choice", "other": true,
+         "options": ["Stay calm and fix it", "Get dramatic about it", "Go quiet", "Joke it off", "Say it straight"]},
+        {"id": "q14", "text": "Their humor is…", "type": "choice", "other": true,
+         "options": ["Sarcastic", "Corny jokes & puns", "Dark humor", "Wholesome & silly", "Serious, mostly"]},
+        {"id": "q16", "text": "They show they care by…", "type": "choice", "other": true,
+         "options": ["Sweet words", "Teasing me", "Asking if I've eaten", "Sending food or gifts", "Just showing up"]}
       ]
     },
     {
-      "title": "Communication style",
+      "title": "How would they reply?",
+      "stage": "deep",
       "questions": [
-        {"id": "q11", "text": "Do they text short messages or long paragraphs?", "type": "short"},
-        {"id": "q12", "text": "Do they use lots of emojis, slang, or formal language?", "type": "short"},
-        {"id": "q13", "text": "What's a phrase they say all the time?", "type": "short"},
-        {"id": "q14", "text": "What kind of humor do they use?", "hint": "sarcasm, puns, dark humor, etc.", "type": "short"},
-        {"id": "q15", "text": "How do they usually respond to people?", "hint": "formal, casual, playful, blunt", "type": "short"}
+        {"id": "r_hi", "prompt": "hiii", "text": "If you texted them “hiii”, they'd reply:", "type": "reply"},
+        {"id": "r_tired", "prompt": "pagod ako 😩", "text": "If you texted them “pagod ako 😩”, they'd reply:", "type": "reply"},
+        {"id": "r_miss", "prompt": "miss na kita", "text": "If you texted them “miss na kita”, they'd reply:", "type": "reply"},
+        {"id": "r_news", "prompt": "I PASSED!! 🎉", "text": "If you texted them “I PASSED!! 🎉”, they'd reply:", "type": "reply"},
+        {"id": "r_sorry", "prompt": "sorry na 🥺", "text": "If you texted them “sorry na 🥺”, they'd reply:", "type": "reply"},
+        {"id": "r_eat", "prompt": "kumain ka na?", "text": "If you texted them “kumain ka na?”, they'd reply:", "type": "reply"},
+        {"id": "r_chika", "prompt": "may chika ako", "text": "If you texted them “may chika ako”, they'd reply:", "type": "reply"},
+        {"id": "r_mad", "prompt": "galit ka ba?", "text": "If you texted them “galit ka ba?”, they'd reply:", "type": "reply"},
+        {"id": "r_bored", "prompt": "bored ako", "text": "If you texted them “bored ako”, they'd reply:", "type": "reply"},
+        {"id": "r_gn", "prompt": "good night", "text": "If you texted them “good night”, they'd reply:", "type": "reply"}
       ]
     },
     {
-      "title": "Relationship dynamics",
+      "title": "The little things",
+      "stage": "deep",
       "questions": [
-        {"id": "q16", "text": "How do they show they care about you?", "type": "short"},
-        {"id": "q17", "text": "Do they have any funny habits or quirks when talking?", "type": "short"},
-        {"id": "q18", "text": "What's an inside joke between you two?", "type": "short"}
-      ]
-    },
-    {
-      "title": "Deeper context",
-      "questions": [
-        {"id": "q19", "text": "What's something most people don't know about them?", "type": "short"},
-        {"id": "q20", "text": "What's one thing you hope people remember about them?", "type": "short"}
+        {"id": "q6", "text": "Describe them in 3 words.", "type": "short", "placeholder": "e.g. makulit, loyal, overthinker"},
+        {"id": "q13", "text": "A word or phrase only they would say?", "hint": "Separate with commas.", "type": "short", "placeholder": "e.g. ayos lang yan, sheesh"},
+        {"id": "x_annoyed", "text": "What do they call you when they're annoyed with you?", "type": "short", "placeholder": "e.g. your full name 💀"},
+        {"id": "x_okay", "text": "What do they say when they're “okay” but clearly not?", "type": "short", "placeholder": "e.g. k., wala, ikaw bahala"},
+        {"id": "x_emoji_fav", "text": "Their go-to emoji or sticker?", "type": "short", "placeholder": "e.g. 😭 🫶"},
+        {"id": "q7", "text": "What could they talk about for hours?", "type": "short", "placeholder": "e.g. basketball, K-dramas, their cat"},
+        {"id": "q9", "text": "What's been on their mind lately?", "type": "short", "placeholder": "e.g. thesis, work, family"},
+        {"id": "q17", "text": "Any funny texting habit?", "hint": "Typos on purpose, voice messages, memes at 3am, double texting…", "type": "short"},
+        {"id": "q18", "text": "Your inside joke?", "type": "short"},
+        {"id": "x_never", "text": "Something they would NEVER say?", "hint": "Helps imy avoid sounding fake. Separate with commas.", "type": "short", "placeholder": "e.g. I love you first, okay po"},
+        {"id": "q4", "text": "How old are they?", "type": "short", "placeholder": "e.g. 21"},
+        {"id": "q19", "text": "Something most people don't know about them?", "type": "short"},
+        {"id": "q20", "text": "One thing you never want to forget about them?", "type": "short"}
       ]
     },
     {
       "title": "One last thing",
+      "stage": "deep",
       "questions": [
-        {"id": "q21", "text": "Anything else you want us to know about them so the agent mimics them perfectly?", "hint": "Share memories, stories, mannerisms, or anything that captures their essence.", "type": "long"}
+        {"id": "q21", "text": "Tell me anything else about them.", "hint": "Memories, stories, the way they talk. This is optional, and there's no limit.", "type": "long"}
       ]
     }
   ]

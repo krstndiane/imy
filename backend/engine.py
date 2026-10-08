@@ -185,7 +185,8 @@ def _turns(messages: list[dict]) -> list[dict]:
         if turns and turns[-1]["speaker"] == m["speaker"] and turns[-1]["shot"] == m["screenshot_id"]:
             turns[-1]["texts"].append(m["text"])
         else:
-            turns.append({"speaker": m["speaker"], "shot": m["screenshot_id"], "texts": [m["text"]]})
+            turns.append({"speaker": m["speaker"], "shot": m["screenshot_id"], "texts": [m["text"]],
+                          "kind": m.get("shot_platform", "")})
     return turns
 
 
@@ -200,8 +201,11 @@ class PersonIndex:
         turns = _turns(messages)
         self.prompts: list[str] = []          # what the user said
         self.replies: list[list[str]] = []    # what the person said next
+        self.practice: list[int] = []         # which of those came from "How would they reply?" in the interview
         for i, t in enumerate(turns):
             if t["speaker"] == "person" and i > 0 and turns[i - 1]["speaker"] == "user" and turns[i - 1]["shot"] == t["shot"]:
+                if t["kind"] == "practice":
+                    self.practice.append(len(self.prompts))
                 self.prompts.append(" ".join(turns[i - 1]["texts"])[:400])
                 self.replies.append(t["texts"][:MAX_BUBBLES])
 
@@ -209,7 +213,10 @@ class PersonIndex:
         self.style = style_mod.build_style(self.person_texts, self.answers)
         # Do they mostly write Tagalog/Taglish? Then composed replies should too.
         tl = sum(1 for t in self.person_texts if TAGALOG_RE.search(t))
-        self.style["tagalog"] = len(self.person_texts) >= 5 and tl / len(self.person_texts) >= 0.2
+        if len(self.person_texts) >= 15 or self.style.get("tagalog_pref") is None:
+            self.style["tagalog"] = len(self.person_texts) >= 5 and tl / len(self.person_texts) >= 0.2
+        else:
+            self.style["tagalog"] = self.style["tagalog_pref"]
 
         self.space = VectorSpace(self.prompts + self.person_texts)
         self.prompt_vecs = self.space.encode(self.prompts) if self.prompts else None
@@ -289,6 +296,10 @@ class PersonIndex:
             act = "clarify"
         about_last = act in ("clarify", "doubt")
 
+        practiced = None if about_last else self._practice_reply(user_text, history, intent, recent, rng)
+        if practiced:
+            return practiced
+
         if not REUSE_LINES:
             # Default: the screenshots only teach HOW they write. The reply itself is written for
             # what you just said (smalltalk.py, then personality.py), then put in their style.
@@ -325,6 +336,22 @@ class PersonIndex:
         return Reply([text], "personality", best, None, None,
                      note=f"No close match in the screenshots, so this was composed from their personality and writing style: {why}.",
                      embedder=kind)
+
+    def _practice_reply(self, user_text: str, history: list[dict], intent, recent: set, rng) -> Reply | None:
+        """You told imy how they'd answer some messages ("If you texted 'pagod ako'..."). Those are the
+        most direct data there is, so when what you say now clearly matches one, use your answer."""
+        if not self.practice or self.prompt_vecs is None:
+            return None
+        sims = self.space.similarity(self.prompt_vecs, self.space.encode([user_text]))
+        best_s, best_i = max((float(sims[i]), i) for i in self.practice)
+        same_intent = [i for i in self.practice if intent and detect_intent(self.prompts[i]) == intent]
+        threshold = 0.75 if self.space.kind == "sentence-transformers" else 0.6
+        pick = best_i if best_s >= threshold else (rng.choice(same_intent) if same_intent else None)
+        if pick is None or self.replies[pick][0].strip().lower() in recent:
+            return None
+        return Reply(list(self.replies[pick]), "practice", round(best_s, 3), self.prompts[pick], intent,
+                     note="This is how you said they'd reply to a message like this (from the interview).",
+                     embedder=self.space.kind)
 
     # ---- optional local LLM (Ollama)
     def _persona_prompt(self, examples: list[tuple[str, list[str]]]) -> str:
@@ -419,7 +446,12 @@ def generate_reply(person: dict, messages: list[dict], history: list[dict], user
         except Exception as exc:
             print(f"[imy] local LLM failed: {exc}")
             note = "Couldn't get a reply from the local model (is Ollama running?). Used pattern matching instead."
-    reply = index.retrieval_reply(user_text, history, rng)
+    never = index.style.get("never_say") or []
+    for attempt in range(4):   # try a few times to avoid anything they'd "never say"
+        reply = index.retrieval_reply(user_text, history, rng)
+        if not any(p in b.lower() for p in never for b in reply.bubbles):
+            break
+        rng = random.Random(seed + attempt + 1)
     reply.bubbles = [b for b in (parser.clean_text(b) for b in reply.bubbles) if b] or reply.bubbles
     if note:
         reply.note = note
