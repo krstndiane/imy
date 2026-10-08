@@ -12,7 +12,7 @@ import ThemeSwitch from "./ThemeSwitch";
                           "how would they reply?", little details, one big optional question.
    Questions come from backend/questions.json, so you can change them without touching code. */
 const STEPS = ["Where you talk", "Basics", "Chats", "Review", "Get to know them"];
-const RECOMMENDED = 10;
+const GOAL = 300;   // of their messages: enough for imy to pick up how they write
 
 const allQuestions = (questions) =>
   questions ? questions.sections.flatMap((s) => s.questions.map((q) => ({ ...q, stage: s.stage, section: s.title }))) : [];
@@ -295,8 +295,8 @@ function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
   const [pasteName, setPasteName] = useState("");
   const [pasteMsg, setPasteMsg] = useState("");
   const input = useRef();
-  const imageCount = shots.filter((s) => s.url).length;
-  const exportedCount = shots.filter((s) => !s.url).reduce((n, s) => n + s.messages.length, 0);
+  // progress is measured in THEIR messages: one uploaded conversation usually covers it, screenshots add a few each
+  const theirs = shots.reduce((n, s) => n + s.messages.filter((m) => m.speaker === "person").length, 0);
 
   async function handleFiles(fileList) {
     const files = [...fileList].filter((f) => f.type.startsWith("image/"));
@@ -325,23 +325,23 @@ function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
     } catch (e) { setPasteMsg(e.message); }
   }
 
-  const enough = imageCount >= RECOMMENDED || exportedCount >= 200;
   return (
     <section className="panel">
-      <ExportImport pid={pid} personName={personName} onImported={onImported} />
-
       <div className="count">
-        <strong>{imageCount}</strong> screenshot{imageCount === 1 ? "" : "s"} added
-        {exportedCount > 0 && <> · <strong>{exportedCount}</strong> messages from chat exports</>}
-        <span className="muted"> · {enough ? "that’s a good amount" : `aim for at least ${RECOMMENDED} screenshots, or import a chat`}</span>
-        <div className="bar"><div style={{ width: enough ? "100%" : Math.min(100, (imageCount / RECOMMENDED) * 100) + "%" }} /></div>
+        <strong>{theirs}</strong> of {personName === "them" ? "their" : `${personName}’s`} messages so far
+        <span className="muted"> · {theirs >= GOAL ? "that’s plenty" : `aim for ${GOAL}+, one conversation upload usually does it`}</span>
+        <div className="bar"><div style={{ width: Math.min(100, (theirs / GOAL) * 100) + "%" }} /></div>
       </div>
 
+      <ExportImport pid={pid} personName={personName} onImported={onImported} />
+
+      <h3 className="sub-head">No file? Use screenshots</h3>
+      <p className="muted small">For chats that aren’t in the download, like newer encrypted Messenger chats or Viber, or a few favorite moments.</p>
       <div className={"drop" + (drag ? " over" : "")}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }}>
-        <p><strong>Drop chat screenshots here</strong></p>
+        <p><strong>Drop screenshots here</strong></p>
         <p className="muted small">PNG, JPG or WEBP from Messenger, WhatsApp, Discord, Viber, Telegram or iMessage. Put your own messages on the right.</p>
         <button className="btn" onClick={() => input.current.click()}>Choose images</button>
         <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
@@ -425,7 +425,7 @@ function ExportImport({ pid, personName, onImported }) {
     setBusy("saving"); setMsg("");
     try {
       const r = await api.importCommit(pid, { token: found.token, conversation_id: chatId, person_name: them, me_name: me });
-      setMsg(`Imported ${r.person_messages} messages from ${personName} and ${r.user_messages} from you, as ${r.sessions} separate talk${r.sessions === 1 ? "" : "s"}.`);
+      setMsg(`Added ${r.person_messages} messages from ${personName} and ${r.user_messages} from you, as ${r.sessions} separate talk${r.sessions === 1 ? "" : "s"}.`);
       setFound(null); setChatId(null);
       onImported?.();
     } catch (e) { setMsg(e.message); }
@@ -437,20 +437,20 @@ function ExportImport({ pid, personName, onImported }) {
 
   return (
     <div className="export">
-      <h3>Import a chat export <span className="tag">best</span></h3>
+      <h3>Upload your conversation <span className="tag">best</span></h3>
       <p className="muted small">
-        Download your chat from the app itself and add it here. Exact who-said-what, emojis included, and usually
-        thousands of messages instead of a few screenshots. It stays on this computer.
+        Download your chat with them from the app, then upload the file here. imy gets every message exactly as
+        written, emojis included, and you pick which conversation to use. It stays on this computer.
       </p>
       <details className="how">
-        <summary>How do I get the file?</summary>
+        <summary>How do I download my conversation?</summary>
         {HOW_TO.map((h) => (
           <div key={h.app}><strong className="small">{h.app}</strong><ol>{h.steps.map((s) => <li key={s}>{s}</li>)}</ol></div>
         ))}
       </details>
 
       <button className="btn" disabled={!!busy} onClick={() => input.current.click()}>
-        {busy === "reading" ? "Reading the file…" : "Choose export file"}
+        {busy === "reading" ? "Reading the file…" : "Choose the file"}
       </button>
       <input ref={input} type="file" accept=".zip,.json,.txt" hidden onChange={(e) => { read(e.target.files[0]); e.target.value = ""; }} />
       {msg && <p className="small" role="status" style={{ marginTop: 10 }}>{msg}</p>}
@@ -496,7 +496,7 @@ function ExportImport({ pid, personName, onImported }) {
           </div>
           <div className="actions" style={{ marginTop: 4 }}>
             <button className="btn primary" disabled={!!busy || !them || !me || them === me} onClick={save}>
-              {busy === "saving" ? "Importing…" : "Import this chat"}
+              {busy === "saving" ? "Uploading…" : "Use this conversation"}
             </button>
           </div>
         </>

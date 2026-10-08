@@ -24,8 +24,13 @@
     .glow-text { text-shadow: 0 0 60px rgba(59, 130, 246, .55), 0 0 18px rgba(59, 130, 246, .35); }
     .btn-glow { box-shadow: 0 0 0 rgba(59, 130, 246, 0); transition: box-shadow .25s, transform .2s, background-color .2s; }
     .btn-glow:hover { box-shadow: 0 0 32px rgba(59, 130, 246, .65); transform: translateY(-1px); }
-    .float { animation: float 7s ease-in-out infinite; }
-    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    /* unsent wall: real-sounding drafts in each app's bubble colour */
+    .draft { display: inline-block; padding: 9px 15px; border-radius: 20px 20px 6px 20px; font-size: 15px; line-height: 1.35; color: #fff; }
+    .draft.ig { background: linear-gradient(180deg, #a033ff, #3797f0); }
+    .draft.fb { background: #0084ff; }
+    .draft.ios { background: #0a84ff; border-radius: 19px 19px 4px 19px; }
+    .draft-row { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .draft-row small { font-size: 11px; color: #94A3B8; padding-right: 4px; }
 
     /* ---- chat mockup: each platform only sets variables; JS swaps data-platform ---- */
     .phone { --bg: #000; --head: #000; --line: #262626; --ink: #f5f5f5; --sub: #a8a8a8; --field: #262626;
@@ -59,7 +64,7 @@
     .tab[aria-selected="true"] { background: #2563EB; color: #fff; box-shadow: 0 0 22px rgba(37, 99, 235, .55); }
     .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
     .reveal.in { opacity: 1; transform: none; }
-    @media (prefers-reduced-motion: reduce) { .float { animation: none; } .reveal { opacity: 1; transform: none; transition: none; } .phone, .phone * { transition: none; } }
+    @media (prefers-reduced-motion: reduce) { .phone .caret { animation: none; } .reveal { opacity: 1; transform: none; transition: none; } .phone, .phone * { transition: none; } }
   </style>
 </head>
 <body class="font-sans text-white antialiased overflow-x-hidden">
@@ -112,7 +117,7 @@
     <section class="mx-auto max-w-6xl px-5 pt-16 pb-20 md:pt-24 md:pb-28 grid lg:grid-cols-2 gap-14 items-center">
       <div>
         <!-- highlighted tagline: blue-tinted pill with a soft glow and a pulsing dot -->
-        <p class="inline-flex items-center gap-2.5 rounded-full px-4 py-1.5 text-sm font-semibold text-white mb-6
+        <p class="inline-flex items-center gap-2.5 rounded-full px-3.5 sm:px-4 py-1.5 text-[12.5px] sm:text-sm font-semibold text-white mb-6 whitespace-nowrap
                   bg-brand-600/25 border border-brand-500/70 shadow-[0_0_28px_rgba(37,99,235,.55)]">
           <span class="relative flex w-2 h-2">
             <span class="absolute inline-flex w-full h-full rounded-full bg-brand-500 opacity-75 animate-ping motion-reduce:hidden"></span>
@@ -125,25 +130,39 @@
           Miss mo na?
         </h1>
         <p class="mt-6 text-lg sm:text-xl text-cool leading-relaxed max-w-xl">
-          Use <strong class="text-white font-semibold">IMY</strong> to talk to them while still maintaining your self-respect.
+          Use <strong class="text-white font-semibold">IMY</strong> to talk to them while still maintaining your <span class="whitespace-nowrap">self-respect</span>.
         </p>
         <div class="mt-9 flex flex-wrap gap-3">
           <a href="/" class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Try Demo</a>
-          <a href="/" class="glass rounded-full px-7 py-3 font-semibold hover:bg-white/10 transition-colors">Upload Screenshot</a>
+          <a href="/" class="glass rounded-full px-7 py-3 font-semibold hover:bg-white/10 transition-colors">Upload a conversation</a>
         </div>
-        <p class="mt-5 text-sm text-cool/80">IMY copies how someone writes. It isn’t them.</p>
+        <!-- what people worry about first, answered before they ask -->
+        <ul class="mt-7 flex flex-wrap gap-x-6 gap-y-2 text-sm text-cool">
+          <li class="flex items-center gap-2">
+            <svg class="text-brand-500 shrink-0" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            Stays on your laptop
+          </li>
+          <li class="flex items-center gap-2">
+            <svg class="text-brand-500 shrink-0" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M4 4l16 16"/></svg>
+            Never messages them
+          </li>
+          <li class="flex items-center gap-2">
+            <svg class="text-brand-500 shrink-0" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v8H4v-8M2 7h20v5H2zM12 20V7M12 7H8a2.5 2.5 0 1 1 0-5c3 0 4 5 4 5zM12 7h4a2.5 2.5 0 1 0 0-5c-3 0-4 5-4 5z"/></svg>
+            Free to use
+          </li>
+        </ul>
       </div>
 
       <!-- hero visual: interactive mockup -->
       <div class="relative">
-        <div class="float glass rounded-[28px] p-4 sm:p-5 max-w-md mx-auto">
+        <div class="glass rounded-[28px] p-4 sm:p-5 max-w-md mx-auto">
           <div role="tablist" aria-label="Chat platform" class="glass rounded-full p-1 grid grid-cols-3 text-xs sm:text-sm font-medium text-cool mb-4">
             <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="false" data-platform="messenger">Messenger</button>
             <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="true" data-platform="instagram">Instagram DMs</button>
             <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="false" data-platform="imessage">iMessage</button>
           </div>
 
-          <div id="phone" class="phone rounded-[22px] overflow-hidden border border-white/10" data-platform="instagram" role="tabpanel" aria-live="polite">
+          <div id="phone" class="phone rounded-[22px] overflow-hidden border border-white/10" data-platform="instagram" role="tabpanel">
             <div class="head relative flex items-center gap-3 px-4 py-3">
               <span class="relative w-9 h-9 rounded-full bg-gradient-to-b from-slate-400 to-slate-600 grid place-items-center text-xs font-semibold text-white shrink-0">L
                 <span class="dot absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-black"></span>
@@ -165,7 +184,7 @@
             </div>
             <div class="px-3 pb-3">
               <!-- the message you typed but didn't send -->
-              <div class="field rounded-full px-4 py-2 text-sm"><span class="typed font-bold">i miss you</span><span class="caret" aria-hidden="true"></span></div>
+              <div class="field rounded-full px-4 py-2 text-sm"><span id="typed" class="typed font-bold">i miss you</span><span class="caret" aria-hidden="true"></span></div>
             </div>
           </div>
           <p class="mt-3 text-center text-xs text-cool">Tap a platform. The chat changes to match.</p>
@@ -176,28 +195,35 @@
     <!-- ===== features ===== -->
     <section id="features" class="mx-auto max-w-6xl px-5 py-20 scroll-mt-20">
       <h2 class="reveal text-3xl sm:text-4xl font-bold tracking-tight">Built to feel familiar</h2>
-      <p class="reveal mt-3 text-cool max-w-2xl">Everything about the conversation looks and sounds the way you remember it, without the message ever leaving your side.</p>
-      <div class="mt-10 grid md:grid-cols-3 gap-5">
-        <article class="reveal glass rounded-3xl p-7 hover:bg-white/[0.06] transition-colors">
+      <p class="reveal mt-3 text-cool max-w-2xl">It talks the way they talked, in the app you used to talk in, and nothing you type ever reaches them.</p>
+      <div class="mt-10 grid md:grid-cols-2 gap-5">
+        <article class="reveal glass rounded-3xl p-7">
           <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M8 10h8M8 14h5"/></svg>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
           </div>
-          <h3 class="text-lg font-semibold">OCR &amp; Screenshot Intelligence</h3>
-          <p class="mt-2 text-cool leading-relaxed">Automatically detects platform layout, separating actual message bubbles from pinned messages, header bars, and system notifications.</p>
+          <h3 class="text-lg font-semibold">Learns from your real conversation</h3>
+          <p class="mt-2 text-cool leading-relaxed">Download your chat from WhatsApp, Messenger, Instagram or Telegram and upload the file. IMY gets every message exactly as written, emojis included. No file? Screenshots work too.</p>
         </article>
-        <article class="reveal glass rounded-3xl p-7 hover:bg-white/[0.06] transition-colors">
+        <article class="reveal glass rounded-3xl p-7">
           <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="3"/><path d="M9 8h4M9 12h6M11 17h2"/></svg>
           </div>
-          <h3 class="text-lg font-semibold">Platform UI Matching</h3>
-          <p class="mt-2 text-cool leading-relaxed">Dynamically updates the chat theme to look and feel exactly like Messenger, IG DMs, or iMessage.</p>
+          <h3 class="text-lg font-semibold">Looks like your actual chat</h3>
+          <p class="mt-2 text-cool leading-relaxed">Messenger, Instagram DMs, iMessage, WhatsApp or Telegram, in light or dark. Same bubbles, same colors, same “Active 1h ago.”</p>
         </article>
-        <article class="reveal glass rounded-3xl p-7 hover:bg-white/[0.06] transition-colors">
+        <article class="reveal glass rounded-3xl p-7">
+          <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold">Knows the little things</h3>
+          <p class="mt-2 text-cool leading-relaxed">How they laugh, what they call you, what they would never say. A short interview, one question at a time, fills in what your chats can’t show.</p>
+        </article>
+        <article class="reveal glass rounded-3xl p-7">
           <div class="w-11 h-11 rounded-2xl bg-brand-600/20 text-brand-500 grid place-items-center mb-5">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.500c0 4.300-2.900 7.700-7 9.500-4.100-1.800-7-5.200-7-9.500V6z"/><path d="M9 12l2.200 2.200L15.200 10"/></svg>
           </div>
-          <h3 class="text-lg font-semibold">Dignity First</h3>
-          <p class="mt-2 text-cool leading-relaxed">Talk through your feelings, gain closure, and process emotions without breaking contact or sending messages you might regret.</p>
+          <h3 class="text-lg font-semibold">Dignity first</h3>
+          <p class="mt-2 text-cool leading-relaxed">Say what you need to say, get closure, and work through it without breaking no-contact or sending something you’ll regret at 2am.</p>
         </article>
       </div>
     </section>
@@ -205,23 +231,47 @@
     <!-- ===== how it works ===== -->
     <section id="how" class="mx-auto max-w-6xl px-5 py-20 scroll-mt-20">
       <h2 class="reveal text-3xl sm:text-4xl font-bold tracking-tight">How it works</h2>
-      <ol class="mt-10 grid md:grid-cols-3 gap-5">
-        <li class="reveal glass rounded-3xl p-7 relative">
+      <ol class="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <li class="reveal glass rounded-3xl p-7">
           <span class="text-5xl font-extrabold text-brand-500/30">01</span>
-          <h3 class="mt-3 text-lg font-semibold">Answer Questions</h3>
-          <p class="mt-2 text-cool leading-relaxed">Fill out a quick interactive setup questionnaire about your relationship dynamic.</p>
+          <h3 class="mt-3 text-lg font-semibold">Tell IMY who they are</h3>
+          <p class="mt-2 text-cool leading-relaxed">Four quick questions: their name, what you call each other, and who they are to you.</p>
         </li>
-        <li class="reveal glass rounded-3xl p-7 relative">
+        <li class="reveal glass rounded-3xl p-7">
           <span class="text-5xl font-extrabold text-brand-500/30">02</span>
-          <h3 class="mt-3 text-lg font-semibold">Upload Past Chats</h3>
-          <p class="mt-2 text-cool leading-relaxed">Drop in chat screenshots—our vision model extracts tone, slang, and formatting while filtering out header/system clutter.</p>
+          <h3 class="mt-3 text-lg font-semibold">Upload your conversation</h3>
+          <p class="mt-2 text-cool leading-relaxed">Download your chat from the app and upload the file, then pick the conversation with them. Screenshots work too.</p>
         </li>
-        <li class="reveal glass rounded-3xl p-7 relative">
+        <li class="reveal glass rounded-3xl p-7">
           <span class="text-5xl font-extrabold text-brand-500/30">03</span>
-          <h3 class="mt-3 text-lg font-semibold">Safe Dynamic Chat</h3>
-          <p class="mt-2 text-cool leading-relaxed">Converse in a familiar interface tailored to your preferred platform theme.</p>
+          <h3 class="mt-3 text-lg font-semibold">Teach it the little things</h3>
+          <p class="mt-2 text-cool leading-relaxed">Tap through this-or-that questions and type how they’d reply to a few messages.</p>
+        </li>
+        <li class="reveal glass rounded-3xl p-7">
+          <span class="text-5xl font-extrabold text-brand-500/30">04</span>
+          <h3 class="mt-3 text-lg font-semibold">Send it here instead</h3>
+          <p class="mt-2 text-cool leading-relaxed">Type the message you almost sent them. IMY answers the way they would.</p>
         </li>
       </ol>
+    </section>
+
+    <!-- ===== the unsent ===== -->
+    <section class="mx-auto max-w-6xl px-5 py-20">
+      <div class="grid lg:grid-cols-[1fr_1.1fr] gap-12 items-center">
+        <div class="reveal">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">The messages people almost send</h2>
+          <p class="mt-4 text-cool leading-relaxed max-w-md">Typed at midnight, stared at, deleted. They still needed to be said. IMY gives them somewhere to go.</p>
+          <a href="/" class="btn-glow inline-block mt-8 rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold">Say yours</a>
+        </div>
+        <div class="reveal space-y-3" aria-label="Examples of unsent messages">
+          <div class="draft-row lg:pr-24"><span class="draft ig">gising ka pa?</span><small>Not sent</small></div>
+          <div class="draft-row"><span class="draft fb">congrats sa bagong work mo</span><small>Deleted</small></div>
+          <div class="draft-row lg:pr-12"><span class="draft ios">i still have your hoodie</span><small>Still in drafts</small></div>
+          <div class="draft-row lg:pr-32"><span class="draft ig">kumain ka na ba?</span><small>Not sent</small></div>
+          <div class="draft-row lg:pr-6"><span class="draft fb">narinig ko yung fave song mo kanina</span><small>Deleted</small></div>
+          <div class="draft-row lg:pr-20"><span class="draft ios">sorry sa lahat</span><small>Sent to IMY</small></div>
+        </div>
+      </div>
     </section>
 
     <!-- ===== privacy ===== -->
@@ -229,7 +279,7 @@
       <div class="reveal glass rounded-3xl p-8 md:p-12 grid md:grid-cols-[1.2fr_1fr] gap-10 items-center">
         <div>
           <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Your chats stay yours</h2>
-          <p class="mt-4 text-cool leading-relaxed">IMY runs on your own computer. Screenshots, messages and answers are stored there, and nothing is ever sent to the person you’re missing.</p>
+          <p class="mt-4 text-cool leading-relaxed">IMY runs on your own computer. Your conversations, screenshots and answers are stored there, and nothing is ever sent to the person you’re missing.</p>
         </div>
         <ul class="space-y-3 text-sm text-cool">
           <li class="flex gap-3"><span class="text-brand-500">●</span> Stored locally in a single file you can delete any time.</li>
@@ -252,8 +302,12 @@
           <p class="mt-3 text-cool leading-relaxed">Messenger, Instagram DMs, iMessage, WhatsApp and Telegram, each in light or dark.</p>
         </details>
         <details class="reveal glass rounded-2xl px-6 py-4 group">
-          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">How many screenshots do I need? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
-          <p class="mt-3 text-cool leading-relaxed">Around ten gives it enough to pick up their tone. You can also paste chat text, which keeps emojis.</p>
+          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">What do I need to get started? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
+          <p class="mt-3 text-cool leading-relaxed">Your conversation file. WhatsApp, Messenger, Instagram and Telegram all let you download your own chats, and IMY lets you pick the one with them. No file? Around ten screenshots work too, or paste the text.</p>
+        </details>
+        <details class="reveal glass rounded-2xl px-6 py-4 group">
+          <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Does it cost anything? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
+          <p class="mt-3 text-cool leading-relaxed">No. IMY runs on your own computer for free. An optional AI mode writes more natural replies if you add your own key, and some providers offer free keys.</p>
         </details>
         <details class="reveal glass rounded-2xl px-6 py-4 group">
           <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Is this a replacement for talking to someone? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
@@ -298,6 +352,21 @@
         next.focus(); setPlatform(next.dataset.platform);
       });
     });
+
+    // ---- the hero's one moment: "i miss you" typed, held, erased, typed again (never sent) ----
+    const typed = document.getElementById('typed');
+    const MESSAGE = 'i miss you';
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function loop() {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;   // keep it still: "i miss you" stays typed
+      for (;;) {
+        await wait(2600);                                                   // stare at it
+        while (typed.textContent) { typed.textContent = typed.textContent.slice(0, -1); await wait(55); }   // erase
+        await wait(1100);
+        for (const ch of MESSAGE) { typed.textContent += ch; await wait(120 + Math.random() * 110); }      // type it again
+      }
+    }
+    loop();
 
     // ---- mobile menu ----
     const menuBtn = document.getElementById('menuBtn'), menu = document.getElementById('mobileMenu');

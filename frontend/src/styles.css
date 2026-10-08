@@ -385,3 +385,5 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
   .ask-text { font-size: 1.05rem; }
 }
 @media (prefers-reduced-motion: reduce) { .card-in { animation: none; } .chip { transition: none; } }
+.sub-head { margin: 26px 0 2px; font-size: 1rem; }
+.sub-head + p { margin: 0 0 12px; }
