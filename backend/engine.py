@@ -204,7 +204,7 @@ class PersonIndex:
         self.practice: list[int] = []         # which of those came from "How would they reply?" in the interview
         for i, t in enumerate(turns):
             if t["speaker"] == "person" and i > 0 and turns[i - 1]["speaker"] == "user" and turns[i - 1]["shot"] == t["shot"]:
-                if t["kind"] == "practice":
+                if t["kind"] in ("practice", "correction"):   # told by you: interview answers and fixes from the chat
                     self.practice.append(len(self.prompts))
                 self.prompts.append(" ".join(turns[i - 1]["texts"])[:400])
                 self.replies.append(t["texts"][:MAX_BUBBLES])
@@ -350,7 +350,7 @@ class PersonIndex:
         if pick is None or self.replies[pick][0].strip().lower() in recent:
             return None
         return Reply(list(self.replies[pick]), "practice", round(best_s, 3), self.prompts[pick], intent,
-                     note="This is how you said they'd reply to a message like this (from the interview).",
+                     note="This is how you said they'd reply to a message like this (from the interview or a fix in the chat).",
                      embedder=self.space.kind)
 
     # ---- optional local LLM (Ollama)

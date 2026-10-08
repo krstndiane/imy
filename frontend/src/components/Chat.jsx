@@ -3,6 +3,7 @@ import { api } from "../api";
 import { initials } from "./Sidebar";
 import { platformOf } from "../platforms";
 import Icon from "./Icon";
+import TrainPanel from "./TrainPanel";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clock = (iso) => (iso ? new Date(iso) : new Date()).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -19,8 +20,12 @@ function explain(d) {
   }
 }
 
-export default function Chat({ person, onChanged, onEdit, onDelete, onBack }) {
+export default function Chat({ person, persons = [], onChanged, onEdit, onDelete, onBack }) {
+  const [mode, setMode] = useState("chat");      // "chat" | "train"
   const [menu, setMenu] = useState(false);
+  const [fixing, setFixing] = useState(null);     // id of the reply being corrected
+  const [fixText, setFixText] = useState("");
+  const [taught, setTaught] = useState({});       // reply id -> "good" | "fixed"
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
@@ -64,12 +69,30 @@ export default function Chat({ person, onChanged, onEdit, onDelete, onBack }) {
   }
   async function toggleLlm(on) { await api.setLlm(person.id, on); onChanged(); }
 
+  /* Teaching from the chat: what you said just before a reply, and the reply's bubbles. */
+  function exchange(i) {
+    let j = i;
+    while (j > 0 && msgs[j - 1].role === "person") j--;
+    let k = j;
+    while (k > 0 && msgs[k - 1].role === "user") k--;
+    return { prompt: msgs.slice(k, j).map((m) => m.text).join(" "), reply: msgs.slice(j, i + 1).map((m) => m.text).join("\n") };
+  }
+  async function teach(i, id, reply) {
+    const { prompt } = exchange(i);
+    try {
+      await api.teach(person.id, prompt, reply);
+      setTaught((t) => ({ ...t, [id]: reply === exchange(i).reply ? "good" : "fixed" }));
+      setFixing(null); setFixText(""); onChanged();
+    } catch (err) { setError(err.message); }
+  }
+
   const untrained = person.person_message_count === 0;
   const learned = untrained ? "No chats learned yet"
     : `${person.person_message_count} of their messages learned from ${person.screenshot_count} screenshot${person.screenshot_count === 1 ? "" : "s"}`;
 
   const actions = (
     <>
+      <button className="btn small" role={app.id ? "menuitem" : undefined} onClick={() => setMode(mode === "train" ? "chat" : "train")}>{mode === "train" ? "Back to chat" : "Train"}</button>
       <button className="btn small" role={app.id ? "menuitem" : undefined} onClick={() => setShowStyle((s) => !s)}>{showStyle ? "Hide style" : "How they write"}</button>
       <button className="btn small" role={app.id ? "menuitem" : undefined} onClick={onEdit}>Edit profile</button>
       <button className="btn small ghost" role={app.id ? "menuitem" : undefined} onClick={clear}>Clear chat</button>
@@ -100,6 +123,14 @@ export default function Chat({ person, onChanged, onEdit, onDelete, onBack }) {
         )}
       </header>
 
+      <div className="mode-switch" role="tablist" aria-label="Chat or train">
+        <button role="tab" aria-selected={mode === "chat"} className={mode === "chat" ? "on" : ""} onClick={() => setMode("chat")}>Chat</button>
+        <button role="tab" aria-selected={mode === "train"} className={mode === "train" ? "on" : ""} onClick={() => setMode("train")}>Train</button>
+      </div>
+
+      {mode === "train" ? (
+        <TrainPanel person={person} persons={persons} onChanged={onChanged} onEditProfile={onEdit} onBackToChat={() => setMode("chat")} />
+      ) : (<>
       {showStyle && (
         <div className="style-panel">
           {!style ? <p className="muted">Reading their style…</p> : (
@@ -121,7 +152,7 @@ export default function Chat({ person, onChanged, onEdit, onDelete, onBack }) {
 
       {untrained && (
         <div className="banner">
-          Replies will be generic until you add screenshots or pasted chats. <button className="link" onClick={onEdit}>Add them now</button>
+          Replies will be generic until you add chats. <button className="link" onClick={() => setMode("train")}>Train {name} now</button>
         </div>
       )}
 
@@ -143,6 +174,26 @@ export default function Chat({ person, onChanged, onEdit, onDelete, onBack }) {
                 <button className="why" aria-expanded={why === m.id} onClick={() => setWhy(why === m.id ? null : m.id)}>why this reply?</button>
               )}
               {showWhy && why === m.id && <p className="why-text">{explain(m.debug)}</p>}
+              {lastOfGroup && typeof m.id === "number" && i > 0 && (
+                taught[m.id] ? (
+                  <p className="teach-done">{taught[m.id] === "good" ? "Noted: sounds like them 👍" : `Saved. Next time ${name} will answer like this.`}</p>
+                ) : fixing === m.id ? (
+                  <form className="teach-fix" onSubmit={(e) => { e.preventDefault(); fixText.trim() && teach(i, m.id, fixText.trim()); }}>
+                    <textarea autoFocus rows={2} value={fixText} onChange={(e) => setFixText(e.target.value)}
+                      placeholder={`What would ${name} really say?`}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fixText.trim() && teach(i, m.id, fixText.trim()); } }} />
+                    <div className="teach-actions">
+                      <button type="button" className="link" onClick={() => setFixing(null)}>Cancel</button>
+                      <button className="btn small primary" disabled={!fixText.trim()}>Teach</button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="teach">
+                    <button title={`This sounds like ${name}`} onClick={() => teach(i, m.id, exchange(i).reply)}>👍</button>
+                    <button title={`Teach imy what ${name} would really say`} onClick={() => { setFixing(m.id); setFixText(""); }}>Fix</button>
+                  </div>
+                )
+              )}
             </div>
           );
         })}
@@ -161,6 +212,7 @@ export default function Chat({ person, onChanged, onEdit, onDelete, onBack }) {
           {app.id ? <Icon name={input.trim() ? app.sendIcon : app.idleIcon} /> : "Send"}
         </button>
       </form>
+      </>)}
     </div>
   );
 }

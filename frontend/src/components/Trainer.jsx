@@ -14,12 +14,12 @@ import ThemeSwitch from "./ThemeSwitch";
 const STEPS = ["Where you talk", "Basics", "Chats", "Review", "Get to know them"];
 const GOAL = 300;   // of their messages: enough for imy to pick up how they write
 
-const allQuestions = (questions) =>
+export const allQuestions = (questions) =>
   questions ? questions.sections.flatMap((s) => s.questions.map((q) => ({ ...q, stage: s.stage, section: s.title }))) : [];
-const filled = (answers, id) => ((answers[id] || "") + "").trim() !== "";
+export const filled = (answers, id) => ((answers[id] || "") + "").trim() !== "";
 
 /* "imy knows them X%": basics 20%, real chat messages 40% (300 of theirs = full), the rest of the interview 40% */
-function knowPercent(questions, answers, personMsgs) {
+export function knowPercent(questions, answers, personMsgs) {
   const all = allQuestions(questions);
   if (!all.length) return 0;
   const share = (qs) => (qs.length ? qs.filter((q) => filled(answers, q.id)).length / qs.length : 0);
@@ -183,7 +183,7 @@ function PlatformPicker({ value, onChange, theme, onTheme, footer }) {
 /* ---------- The interview: one question per screen ----------
    card types: short | long | choice | reply | guess (from /api/persons/:id/guesses)
    Each answer is saved as you go (onSave), so "Finish later" never loses anything. */
-function Deck({ cards, answers, setAnswers, personName, onSave, onFinish, onLater, onBackFirst, finishLabel, busy }) {
+export function Deck({ cards, answers, setAnswers, personName, onSave, onFinish, onLater, onBackFirst, finishLabel, busy }) {
   const [i, setI] = useState(() => {   // reopening: start at the first card not answered yet
     const k = cards.findIndex((c) => c.type === "guess" || !filled(answers, c.id));
     return k > 0 ? k : 0;
@@ -288,7 +288,7 @@ function Deck({ cards, answers, setAnswers, personName, onSave, onFinish, onLate
 }
 
 /* ---------- Step 3: chats (export import, screenshots, pasted text) ---------- */
-function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
+export function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
   const [queue, setQueue] = useState([]);
   const [drag, setDrag] = useState(false);
   const [pasted, setPasted] = useState("");
@@ -298,22 +298,36 @@ function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
   // progress is measured in THEIR messages: one uploaded conversation usually covers it, screenshots add a few each
   const theirs = shots.reduce((n, s) => n + s.messages.filter((m) => m.speaker === "person").length, 0);
 
-  async function handleFiles(fileList) {
-    const files = [...fileList].filter((f) => f.type.startsWith("image/"));
-    const items = files.map((f) => ({ name: f.name, status: "waiting" }));
-    setQueue(items.slice());
-    for (let i = 0; i < files.length; i++) {      // one at a time: OCR is slow, this shows progress
-      items[i] = { ...items[i], status: "reading" }; setQueue(items.slice());
-      try {
-        const res = await api.upload(pid, [files[i]]);
-        onAdded(res);
-        items[i] = { ...items[i], status: "done", count: res[0].messages.length };
-      } catch (e) {
-        items[i] = { ...items[i], status: "error", msg: e.message };
-      }
-      setQueue(items.slice());
-    }
+  // No limit on how many screenshots: they join one queue and are read one at a time (OCR is slow),
+  // so you can keep dropping more while earlier ones are still being read.
+  const pending = useRef([]);
+  const running = useRef(false);
+
+  function handleFiles(fileList) {
+    const files = [...fileList].filter((f) => f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(f.name));
+    const items = files.map((f) => ({ key: `${Date.now()}-${Math.random()}`, name: f.name, status: "waiting", file: f }));
+    setQueue((q) => [...q, ...items.map(({ file, ...rest }) => rest)]);
+    pending.current.push(...items);
+    if (!running.current) work();
   }
+
+  async function work() {
+    running.current = true;
+    while (pending.current.length) {
+      const it = pending.current.shift();
+      const update = (patch) => setQueue((q) => q.map((x) => (x.key === it.key ? { ...x, ...patch } : x)));
+      update({ status: "reading" });
+      try {
+        const [shot] = await api.upload(pid, [it.file]);
+        if (!shot.duplicate) onAdded([shot]);
+        update({ status: "done", count: shot.messages.length, duplicate: shot.duplicate, skipped: shot.overlap_skipped });
+      } catch (e) {
+        update({ status: "error", msg: e.message });
+      }
+    }
+    running.current = false;
+  }
+  const finished = queue.filter((q) => q.status === "done" || q.status === "error").length;
 
   async function importText() {
     setPasteMsg("");
@@ -329,7 +343,7 @@ function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
     <section className="panel">
       <div className="count">
         <strong>{theirs}</strong> of {personName === "them" ? "their" : `${personName}’s`} messages so far
-        <span className="muted"> · {theirs >= GOAL ? "that’s plenty" : `aim for ${GOAL}+, one conversation upload usually does it`}</span>
+        <span className="muted"> · {theirs >= GOAL ? "that’s plenty, and more still helps" : "no limit: the more you add, the closer the replies"}</span>
         <div className="bar"><div style={{ width: Math.min(100, (theirs / GOAL) * 100) + "%" }} /></div>
       </div>
 
@@ -341,21 +355,29 @@ function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }}>
-        <p><strong>Drop screenshots here</strong></p>
-        <p className="muted small">PNG, JPG or WEBP from Messenger, WhatsApp, Discord, Viber, Telegram or iMessage. Put your own messages on the right.</p>
-        <button className="btn" onClick={() => input.current.click()}>Choose images</button>
+        <p><strong>Drop as many screenshots as you want</strong></p>
+        <p className="muted small">PNG, JPG or WEBP from any chat app, as many as you like. Repeats and overlapping screenshots are skipped automatically.</p>
+        <button className="btn" onClick={() => input.current.click()}>Choose screenshots</button>
         <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
       </div>
 
       {queue.length > 0 && (
+        <p className="small queue-sum" role="status">
+          {finished < queue.length
+            ? `Reading ${Math.min(finished + 1, queue.length)} of ${queue.length}… you can keep adding more.`
+            : `Done: ${queue.length} screenshot${queue.length === 1 ? "" : "s"} read.`}
+        </p>
+      )}
+      {queue.length > 0 && (
         <ul className="queue">
-          {queue.map((q, i) => (
-            <li key={i} className={q.status}>
+          {queue.map((q) => (
+            <li key={q.key} className={q.status}>
               <span>{q.name}</span>
               <span>
                 {q.status === "waiting" && "Waiting"}
                 {q.status === "reading" && "Reading text…"}
-                {q.status === "done" && `${q.count} messages found`}
+                {q.status === "done" && (q.duplicate ? "Already added" :
+                  `${q.count} message${q.count === 1 ? "" : "s"} found` + (q.skipped ? ` · ${q.skipped} already in another screenshot` : ""))}
                 {q.status === "error" && q.msg}
               </span>
             </li>
@@ -508,7 +530,7 @@ function ExportImport({ pid, personName, onImported }) {
 /* ---------- Step 4: review and fix ---------- */
 const COLLAPSE_OVER = 12;   // imported talks longer than this start folded, so the page stays fast
 
-function Review({ shots, flagged, personName, reload, footer }) {
+export function Review({ shots, flagged, personName, reload, footer }) {
   const total = shots.reduce((n, s) => n + s.messages.length, 0);
   const act = (fn) => async (...args) => { await fn(...args); await reload(); };
   const [open, setOpen] = useState(new Set());
@@ -528,6 +550,8 @@ function Review({ shots, flagged, personName, reload, footer }) {
             <span className="tag">{s.platform}</span>
             {flagged.has(s.id) && <span className="tag warn">Couldn’t match names, check the speakers</span>}
             <span className="grow" />
+            {s.url && <button className="btn small" title="Read this screenshot again with imy's latest reader"
+              onClick={act(() => api.reread(s.id))}>Read again</button>}
             <button className="btn small" onClick={act(() => api.flipScreenshot(s.id))}>Swap sides</button>
             <button className="btn small ghost" onClick={act(() => api.deleteScreenshot(s.id))}>Remove</button>
           </header>

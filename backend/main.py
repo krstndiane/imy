@@ -3,6 +3,7 @@
 Run from the project root:   uvicorn backend.main:app --reload
 Interactive docs:            http://localhost:8000/docs
 """
+import hashlib
 import json
 import re
 import shutil
@@ -90,7 +91,7 @@ def _person_for_engine(conn, pid: int) -> dict:
     if person.get("platform"):  # chosen by the user in setup
         return person
     row = conn.execute(
-        "SELECT platform FROM screenshots WHERE person_id = ? AND platform NOT IN ('unknown', 'text-import', 'practice') "
+        "SELECT platform FROM screenshots WHERE person_id = ? AND platform NOT IN ('unknown', 'text-import', 'practice', 'correction') "
         "GROUP BY platform ORDER BY COUNT(*) DESC LIMIT 1", (pid,)).fetchone()
     person["platform"] = row["platform"] if row else "unknown"
     return person
@@ -215,9 +216,34 @@ def delete_person(pid: int):
 
 
 # ---------------------------------------------------------------- screenshots
+def _read_image(img, names: list[str]) -> dict:
+    """Who-said-what for one screenshot: Claude if switched on, else the local screen-aware reader."""
+    if claude.enabled():
+        try:
+            return claude.parse_screenshot(img, names)
+        except Exception as exc:  # fall back to local OCR
+            print(f"[imy] Claude couldn't read a screenshot: {claude.explain(exc)}")
+    try:
+        screen = ocr.read_screen(img, names)
+    except ocr.TesseractNotFoundError:
+        raise HTTPException(503, "Tesseract OCR isn't installed or isn't on your PATH. See the README (step 1).")
+    return parser.parse_screen(screen, names)
+
+
+def _other_shot_messages(conn, pid: int, except_id: int | None = None) -> list[list[dict]]:
+    rows = conn.execute("SELECT id FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL AND id != ?",
+                        (pid, except_id or -1)).fetchall()
+    return [[dict(m) for m in conn.execute("SELECT speaker, text FROM messages WHERE screenshot_id = ? ORDER BY position",
+                                           (r["id"],))] for r in rows]
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha1(path.read_bytes()).hexdigest()
+
+
 @app.post("/api/persons/{pid}/screenshots")
 def upload_screenshots(pid: int, files: list[UploadFile] = File(...)):
-    """OCR each image, work out who said what, store everything."""
+    """Read each image (chat area only, one message per bubble), drop what's already been added, store the rest."""
     results = []
     with db() as conn:
         person = _person_dict(_person_row(conn, pid))
@@ -231,34 +257,62 @@ def upload_screenshots(pid: int, files: list[UploadFile] = File(...)):
             dest = folder / f"{uuid.uuid4().hex}{ext}"
             with dest.open("wb") as out:
                 shutil.copyfileobj(f.file, out)
+            # The exact same image uploaded before? Don't learn it twice.
+            digest = _file_hash(dest)
+            twin = next((r for r in conn.execute("SELECT * FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL",
+                                                 (pid,)).fetchall()
+                         if (UPLOAD_DIR / r["stored_path"]).exists() and _file_hash(UPLOAD_DIR / r["stored_path"]) == digest), None)
+            if twin:
+                dest.unlink(missing_ok=True)
+                shot = _shot_out(conn, twin)
+                shot.update(duplicate=True, needs_review=False)
+                results.append(shot)
+                continue
             try:
                 img = Image.open(dest)
                 img.load()
             except Exception:
                 dest.unlink(missing_ok=True)
                 raise HTTPException(400, f"{f.filename}: couldn't read this image.")
-            parsed = None
-            if claude.enabled():
-                try:
-                    parsed = claude.parse_screenshot(img, names)
-                except Exception as exc:  # fall back to local OCR
-                    print(f"[imy] Claude couldn't read {f.filename}: {claude.explain(exc)}")
-            if parsed is None:
-                try:
-                    lines, size, rgb = ocr.extract_lines(img)
-                except ocr.TesseractNotFoundError:
-                    dest.unlink(missing_ok=True)
-                    raise HTTPException(503, "Tesseract OCR isn't installed or isn't on your PATH. See the README (step 1).")
-                parsed = parser.parse_screenshot(lines, size, rgb, names)
+            try:
+                parsed = _read_image(img, names)
+            except HTTPException:
+                dest.unlink(missing_ok=True)
+                raise
+            # Screenshots taken while scrolling overlap: skip messages another screenshot already has.
+            msgs, skipped = parser.trim_overlap(parsed["messages"], _other_shot_messages(conn, pid))
             cur = conn.execute(
                 "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
                 (pid, f.filename, f"{pid}/{dest.name}", parsed["platform"], parsed["raw_text"], now()))
-            _store_messages(conn, pid, cur.lastrowid, parsed["messages"])
+            _store_messages(conn, pid, cur.lastrowid, msgs)
             shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
-            shot["needs_review"] = parsed["needs_review"]
+            shot.update(needs_review=parsed["needs_review"], overlap_skipped=skipped)
             results.append(shot)
         bump_version(conn, pid)
     return results
+
+
+@app.post("/api/screenshots/{sid}/reread")
+def reread_screenshot(sid: int):
+    """Read a stored screenshot again with the current reader (e.g. after imy got smarter). Replaces its messages."""
+    with db() as conn:
+        shot = conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone()
+        if not shot or not shot["stored_path"]:
+            raise HTTPException(404, "Screenshot not found")
+        path = UPLOAD_DIR / shot["stored_path"]
+        if not path.exists():
+            raise HTTPException(410, "The image file is missing. Remove this item and upload it again.")
+        person = _person_dict(_person_row(conn, shot["person_id"]))
+        parsed = _read_image(Image.open(path), _known_names(person["answers"]))
+        msgs, skipped = parser.trim_overlap(parsed["messages"], _other_shot_messages(conn, shot["person_id"], sid))
+        conn.execute("DELETE FROM messages WHERE screenshot_id = ?", (sid,))
+        conn.execute("UPDATE screenshots SET platform = ?, raw_text = ?, flipped = 0 WHERE id = ?",
+                     (parsed["platform"], parsed["raw_text"], sid))
+        _store_messages(conn, shot["person_id"], sid, msgs)
+        bump_version(conn, shot["person_id"])
+        out = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone())
+        out.update(needs_review=parsed["needs_review"], overlap_skipped=skipped)
+        return out
 
 
 class TextImportIn(BaseModel):
@@ -502,7 +556,7 @@ def get_guesses(pid: int):
     Each says which answer to fill in if you confirm it (mode 'add' appends to a comma list)."""
     with db() as conn:
         person = _person_for_engine(conn, pid)
-        msgs = [m for m in _messages_for_engine(conn, pid) if m.get("shot_platform") != "practice"]
+        msgs = [m for m in _messages_for_engine(conn, pid) if m.get("shot_platform") not in ("practice", "correction")]
     texts = [m["text"] for m in msgs if m["speaker"] == "person"]
     if len(texts) < 10:
         return []
@@ -537,6 +591,67 @@ def get_guesses(pid: int):
         if not has("q13", phrase):
             out.append({"id": f"phrase_{phrase}", "text": f"They often say “{phrase}”", "field": "q13", "value": phrase, "mode": "add"})
     return out
+
+
+# ---------------------------------------------------------------- teaching from the chat
+class TeachIn(BaseModel):
+    prompt: str             # what you said
+    reply: str              # what they would really say (a fix), or the reply imy gave that sounded right (a 👍)
+
+
+@app.post("/api/persons/{pid}/teach")
+def teach(pid: int, body: TeachIn):
+    """Save "when I say X, they'd say Y" from the chat. Stored with the person's other chats (one item
+    called "Taught in chat", editable in Review) and used before anything else when you say something similar."""
+    prompt, reply = body.prompt.strip(), body.reply.strip()
+    if not prompt or not reply:
+        raise HTTPException(400, "Both your message and their reply are needed.")
+    with db() as conn:
+        _person_row(conn, pid)
+        row = conn.execute("SELECT id FROM screenshots WHERE person_id = ? AND platform = 'correction'", (pid,)).fetchone()
+        sid = row["id"] if row else conn.execute(
+            "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "Taught in chat", None, "correction", "", now())).lastrowid
+        start = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE screenshot_id = ?", (sid,)).fetchone()[0]
+        lines = [{"speaker": "user", "text": prompt}] + [{"speaker": "person", "text": l.strip()} for l in reply.splitlines() if l.strip()]
+        conn.executemany("INSERT INTO messages (person_id, screenshot_id, position, speaker, text) VALUES (?,?,?,?,?)",
+                         [(pid, sid, start + i, m["speaker"], m["text"]) for i, m in enumerate(lines)])
+        bump_version(conn, pid)
+        taught = conn.execute("SELECT COUNT(*) FROM messages WHERE screenshot_id = ? AND speaker = 'user'", (sid,)).fetchone()[0]
+    return {"ok": True, "taught": taught}
+
+
+# ---------------------------------------------------------------- merging duplicates
+class MergeIn(BaseModel):
+    from_id: int
+
+
+@app.post("/api/persons/{pid}/merge")
+def merge_person(pid: int, body: MergeIn):
+    """Move everything learned about another person (screenshots, chats, answers they're missing) into this one,
+    then remove the other one. For when the same person was set up twice."""
+    if body.from_id == pid:
+        raise HTTPException(400, "Pick a different person to merge in.")
+    with db() as conn:
+        target = _person_dict(_person_row(conn, pid))
+        other = _person_dict(_person_row(conn, body.from_id))
+        answers = {**{k: v for k, v in other["answers"].items() if (v or "").strip()},
+                   **{k: v for k, v in target["answers"].items() if (v or "").strip()}}   # this person's answers win
+        conn.execute("UPDATE screenshots SET person_id = ? WHERE person_id = ? AND platform NOT IN ('practice', 'correction')",
+                     (pid, body.from_id))
+        conn.execute("UPDATE messages SET person_id = ? WHERE screenshot_id IN (SELECT id FROM screenshots WHERE person_id = ?)",
+                     (pid, pid))
+        for kind in ("correction",):   # their chat corrections join this person's
+            rows = conn.execute("SELECT id FROM screenshots WHERE person_id = ? AND platform = ?", (body.from_id, kind)).fetchall()
+            for r in rows:
+                conn.execute("UPDATE screenshots SET person_id = ?, filename = 'Taught in chat (merged)' WHERE id = ?", (pid, r["id"]))
+                conn.execute("UPDATE messages SET person_id = ? WHERE screenshot_id = ?", (pid, r["id"]))
+        conn.execute("UPDATE persons SET answers = ? WHERE id = ?", (json.dumps(answers), pid))
+        _sync_practice(conn, pid, answers)
+        conn.execute("DELETE FROM persons WHERE id = ?", (body.from_id,))   # its uploaded images stay on disk; they're still used
+        bump_version(conn, pid)
+        engine.forget(body.from_id)
+        return _person_summary(conn, _person_row(conn, pid))
 
 
 @app.get("/api/persons/{pid}/style")

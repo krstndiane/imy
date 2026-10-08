@@ -64,7 +64,7 @@ export default function App() {
             onCancel={() => { refresh(); setMode("chat"); }}
           />
         ) : active ? (
-          <Chat key={active.id} person={active} onChanged={refresh} onBack={() => setActiveId(null)} onEdit={() => startTraining(active.id)} onDelete={() => remove(active.id)} />
+          <Chat key={active.id} person={active} persons={persons} onChanged={refresh} onBack={() => setActiveId(null)} onEdit={() => startTraining(active.id)} onDelete={() => remove(active.id)} />
         ) : (
           <Welcome hasPeople={persons.length > 0} onNew={() => startTraining(null)} />
         )}

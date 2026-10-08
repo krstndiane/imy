@@ -38,6 +38,7 @@ export const api = {
   },
   importCommit: (id, body) => send("POST", `/api/persons/${id}/import-commit`, body),
   flipScreenshot: (sid) => send("POST", `/api/screenshots/${sid}/flip`),
+  reread: (sid) => send("POST", `/api/screenshots/${sid}/reread`),   // read a screenshot again with the latest reader
   deleteScreenshot: (sid) => send("DELETE", `/api/screenshots/${sid}`),
 
   editMessage: (mid, patch) => send("PUT", `/api/messages/${mid}`, patch),
@@ -49,4 +50,6 @@ export const api = {
   clearChat: (id) => send("DELETE", `/api/persons/${id}/chat`),
   style: (id) => send("GET", `/api/persons/${id}/style`),
   guesses: (id) => send("GET", `/api/persons/${id}/guesses`),   // "imy noticed…" cards for the interview
+  teach: (id, prompt, reply) => send("POST", `/api/persons/${id}/teach`, { prompt, reply }),   // 👍 / Fix from the chat
+  merge: (id, fromId) => send("POST", `/api/persons/${id}/merge`, { from_id: fromId }),
 };

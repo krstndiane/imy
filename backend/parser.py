@@ -36,6 +36,18 @@ CHROME_PATTERNS = [
     r"you sent.*|you replied.*|edited|new messages?|unread messages?|end-to-end encrypted.*|"
     r"messages and calls are end-to-end.*|tap to.*|reply|forwarded)\W*$",
     r"^.{0,14}\(message(\s+\S{1,3}){0,2}\W*$",              # the input bar, e.g. "60 @G BG & (Message"
+    r"^\W*\d{1,3}\W*$",                                        # lone numbers: unread badges, "1" read markers
+    # Messenger / Instagram / WhatsApp / iMessage system lines
+    r"^\W*(turn on active status|active \d+\s?(m|h|d|min|mins|hr|hrs|hours?|minutes?) ago|"
+    r"you can now (message|call).*|you('re| are) now connected.*|say hi to.*|"
+    r"seen by.*|seen \d.*|replied to (you|yourself|themselves|\w+)|you replied to.*|.* replied to you|"
+    r".* reacted .* to (your|a) message.*|.* (pinned|unpinned) a message.*|pinned message.*|"
+    r".* unsent a message.*|you unsent a message.*|this message was (deleted|unsent).*|"
+    r"missed (audio|video|voice) call.*|(audio|video|voice) call( ended)?.*|.* called you.*|tap to call back.*|"
+    r"message requests?.*|view profile|you('re| are) friends on facebook.*|"
+    r"messages and calls are (end-to-end encrypted|secured).*|.* changed the (theme|chat theme|emoji|nickname).*|"
+    r".* set (the|your|their) nickname.*|.* named the group.*|.* (joined|left) the (group|call).*|"
+    r"today|yesterday|now|just now|sent|delivered|read|seen|edited)\W*$",
 ]
 CHROME_RES = [re.compile(p, re.I) for p in CHROME_PATTERNS]
 TRAILING_TIME_RE = re.compile(rf"\s*{_TIME}\s*[vV✓√/\\]*\s*$", re.I)
@@ -48,7 +60,7 @@ HEADER_RE = re.compile(
 
 PLATFORM_HINTS = {
     "whatsapp": ["whatsapp", "end-to-end encrypted", "last seen today", "last seen yesterday"],
-    "messenger": ["messenger", "active now", "you sent", "you replied", "aa"],
+    "messenger": ["messenger", "active now", "you sent", "you replied", "aa", "turn on active status", "replied to you"],
     "discord": ["message @", "message #", "today at", "yesterday at", "discord"],
     "viber": ["viber", "type a message", "seen"],
     "telegram": ["telegram", "last seen recently", "write a message", "online"],
@@ -219,6 +231,83 @@ def parse_headers(lines, size, person_names) -> tuple[list[dict], bool]:
             if text and not is_chrome(text):
                 out.append({"speaker": roles.get(name, "person"), "text": text})
     return out, needs_review
+
+
+# ---------------------------------------------------------------- screen-aware (bubble-first) reading
+def _saturation(color) -> float:
+    r, g, b = (v / 255 for v in color)
+    mx, mn = max(r, g, b), min(r, g, b)
+    return 0.0 if mx == 0 else (mx - mn) / mx
+
+
+def bubble_side(r, width: int) -> str:
+    """Who sent this bubble? Mostly where it sits; colour breaks ties
+    (your bubbles are coloured in most apps, theirs grey or white)."""
+    align = ((width - r.x1) - r.x0) / width          # > 0: it hugs the left edge
+    sat = _saturation(r.color)
+    lean = -0.15 if sat > 0.28 else 0.15 if sat < 0.08 else 0.0
+    return "person" if align + lean > 0 else "user"
+
+
+MIN_BUBBLE_CONF = 75   # clearly readable bubbles score 85-97 in testing; half-covered ones ~65
+
+
+def parse_screen(screen, person_names: list[str]) -> dict:
+    """Read a screenshot from ocr.read_screen(): one message per bubble, app chrome left out.
+    Falls back to the line-by-line parser when the bubbles can't be told apart from the background
+    (some light themes) or the app has no bubbles (Discord-style)."""
+    width, height = screen.size
+    raw_text = "\n".join(l.text for l in screen.lines)
+    platform = detect_platform(raw_text)
+    in_area = [l for l in screen.lines if screen.top <= (l.top + l.bottom) / 2 <= screen.bottom and not is_chrome(l.text)]
+    inside = lambda l: any(r.x0 <= (l.left + l.right) / 2 <= r.x1 and r.y0 <= (l.top + l.bottom) / 2 <= r.y1
+                           for r in screen.bubbles)
+    covered = sum(map(inside, in_area)) / max(len(in_area), 1)
+
+    if len(screen.bubbles) >= 2 and covered >= 0.5 and not looks_like_header_layout(in_area):
+        messages = []
+        for r in screen.bubbles:
+            if r.cut:                       # runs off the top/bottom: only part of it is visible (and the
+                continue                    # rest is usually in the next screenshot anyway)
+            if np.mean([l.conf for l in r.lines]) < MIN_BUBBLE_CONF:
+                continue                    # covered by a button, sticker or photo: the text came out garbled
+            text = clean_text(r.text)
+            if text and not is_chrome(text) and re.search(r"[^\W\d_]|\d{4,}", text):
+                messages.append({"speaker": bubble_side(r, width), "text": text})
+        messages = [m for i, m in enumerate(messages) if not (i < 2 and is_contact_header(m["text"], person_names))]
+        return {"platform": platform, "messages": messages, "raw_text": raw_text, "needs_review": False}
+
+    # Fallback: the line-by-line reader, limited to the chat area.
+    res = parse_screenshot(in_area, screen.size, screen.rgb, person_names)
+    res["raw_text"] = raw_text
+    res["platform"] = platform if res["platform"] in ("unknown", "discord") and platform != "unknown" else res["platform"]
+    return res
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"[\W_]+", "", t.lower())
+
+
+def trim_overlap(new: list[dict], others: list[list[dict]]) -> tuple[list[dict], int]:
+    """Screenshots taken while scrolling overlap: the first (or last) few messages of one are the
+    last (or first) few of the one before. Drop that repeated stretch so nothing is learned twice.
+    Only the very edges are compared (first messages vs another screenshot's last ones, and the reverse),
+    so a repeated "haha" in the middle of a chat is never touched."""
+    key = lambda m: (m["speaker"], _norm(m["text"]))
+    keys = [key(m) for m in new]
+    best_head = best_tail = 0
+    for old in others:
+        ok = [key(m) for m in old]
+        for k in range(min(len(keys), len(ok)), 0, -1):          # start of new == end of an older one
+            if keys[:k] == ok[-k:]:
+                best_head = max(best_head, k); break
+        for k in range(min(len(keys), len(ok)), 0, -1):          # end of new == start of an older one
+            if keys[-k:] == ok[:k]:
+                best_tail = max(best_tail, k); break
+    head, tail = best_head, best_tail
+    if head + tail >= len(new):
+        return [], len(new)
+    return new[head:len(new) - tail], head + tail
 
 
 # ---------------------------------------------------------------- public entry points

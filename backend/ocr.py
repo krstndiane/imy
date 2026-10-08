@@ -172,3 +172,162 @@ def extract_lines(img: Image.Image):
     return lines, img.size, rgb
 
 
+
+
+# =====================================================================================
+# Screen-aware reading (used for uploads): read a screenshot the way a person does.
+#   1. find the CHAT AREA: below the title bar / pinned-message bar, above the message box
+#   2. find the BUBBLES inside it by shape and colour (avatars, buttons and icons are skipped)
+#   3. read each bubble ON ITS OWN, so its text is complete and never mixed with a neighbour's
+# parser.parse_screen() then decides who sent each bubble from its side and colour.
+# =====================================================================================
+import re
+
+# Title-bar text: status lines, back-button badges like "<30", call/video labels.
+HEADER_HINT_RE = re.compile(
+    r"active|online|offline|last seen|turn on|typing|tap here|tap for|contact info|"
+    r"^\W*[<«(]?\s*\d{1,3}\W*$|^\W*\d{1,2}[:.]\d{2}\W*$", re.I)
+# The message box at the bottom of the screen.
+COMPOSER_RE = re.compile(
+    r"^\W{0,4}(aa|message\W*|imessage|text message|type a message|write a message|send a message|"
+    r"message @\S*|message #\S*|start typing|reply)\W{0,6}$", re.I)
+
+
+# ...often read with the icons around it, e.g. "(Message © ib" or "G@ & (Message ©".
+COMPOSER_WORD_RE = re.compile(r"(?<![a-z])(i?message|aa)(?![a-z])", re.I)
+
+
+@dataclass
+class Region:
+    """One bubble on screen, with the text read from inside it."""
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+    color: tuple
+    cut: str = ""                       # "top" / "bottom" when the bubble runs off the chat area
+    lines: list = None
+
+    @property
+    def text(self) -> str:
+        return " ".join(l.text for l in (self.lines or []))
+
+
+@dataclass
+class Screen:
+    lines: list          # every line found on the whole screenshot
+    size: tuple          # (width, height)
+    rgb: np.ndarray
+    top: int             # chat area: y where messages start
+    bottom: int          #            y where the message box begins
+    bubbles: list        # Regions, top to bottom
+
+
+def _background(rgb: np.ndarray) -> np.ndarray:
+    small = rgb[::4, ::4].astype(int)
+    quant = (small // 16).reshape(-1, 3)
+    vals, counts = np.unique(quant, axis=0, return_counts=True)
+    common = vals[counts.argmax()]
+    return np.median(small[(small // 16 == common).all(axis=2)], axis=0)
+
+
+def chat_area(rgb: np.ndarray, lines: list, person_names=()) -> tuple[int, int]:
+    """(top, bottom) of the part of the screen where messages are."""
+    H, W = rgb.shape[:2]
+    bg = _background(rgb)
+    frac = (np.abs(rgb.astype(int) - bg).sum(axis=2) > 30).mean(axis=1)    # how much of each row isn't background
+    names = [n.lower() for n in person_names if n and len(n) >= 3]
+    top = int(0.055 * H)                                                    # phone status bar
+    # Full-width bars near the top: the title bar, a separator line, a pinned-message bar.
+    for y in range(int(0.35 * H)):
+        if frac[y] >= 0.95:
+            top = max(top, y + 1)
+    # Title-bar text: their name, "Active 1h ago", "Turn on active status", the "<30" back badge.
+    for l in lines:
+        low = l.text.lower()
+        if l.bottom < 0.2 * H and (HEADER_HINT_RE.search(l.text) or any(n in low for n in names)):
+            top = max(top, int(l.bottom + 0.5 * l.height))
+    bottom = H
+    for l in lines:                                                         # the message box
+        t = l.text.strip()
+        if l.top > 0.75 * H and (COMPOSER_RE.match(t) or (COMPOSER_WORD_RE.search(t) and len(t.split()) <= 6)):
+            bottom = min(bottom, int(l.top - 0.7 * l.height))
+    for y in range(int(0.8 * H), H):                                        # or a full-width bottom bar
+        if frac[y] >= 0.95:
+            bottom = min(bottom, y)
+            break
+    return top, max(bottom, top + 1)
+
+
+def find_bubbles(rgb: np.ndarray, top: int, bottom: int) -> list[Region]:
+    """Solid-coloured shapes inside the chat area that look like message bubbles."""
+    H, W = rgb.shape[:2]
+    step = 2
+    bg = _background(rgb)
+    small = rgb[::step, ::step].astype(int)
+    mask = np.abs(small - bg).sum(axis=2) > 30
+    mask[: top // step] = False
+    mask[bottom // step:] = False
+    mask = ndimage.binary_fill_holes(ndimage.binary_closing(mask, iterations=1))
+    labels, _ = ndimage.label(mask)
+    out = []
+    full = np.abs(rgb.astype(int) - bg).sum(axis=2) > 30
+    for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+        y0, y1, x0, x1 = sl[0].start * step, sl[0].stop * step, sl[1].start * step, sl[1].stop * step
+        w, h = x1 - x0, y1 - y0
+        fill = (labels[sl] == i).mean()
+        if w < 0.06 * W or w > 0.93 * W or h < 0.018 * H or fill < 0.6:
+            continue
+        squareish = abs(w - h) < 0.3 * max(w, h) and w < 0.15 * W
+        if squareish and (x0 < 0.08 * W or abs((x0 + x1) / 2 - W / 2) < 0.1 * W or w < 0.09 * W):
+            continue                                                       # avatars, the scroll-down button, icons
+        # Stacked bubbles sit only a few pixels apart and can be found as one shape: split at background rows.
+        cover = full[y0:y1, x0:x1].mean(axis=1)
+        start = None
+        for y, c in enumerate(list(cover) + [0.0]):
+            if c >= 0.2 and start is None:
+                start = y
+            elif c < 0.2 and start is not None:
+                if y - start >= 0.016 * H:
+                    a, b = y0 + start, y0 + y
+                    px = rgb[a:b, x0:x1][full[a:b, x0:x1]]
+                    color = tuple(int(v) for v in np.median(px, axis=0)) if len(px) else (0, 0, 0)
+                    cut = "top" if a <= top + 2 else "bottom" if b >= bottom - 2 else ""
+                    out.append(Region(x0, a, x1, b, color, cut))
+                start = None
+    out.sort(key=lambda r: (r.y0, r.x0))
+    return out
+
+
+def read_bubble(rgb: np.ndarray, r: Region) -> list[Line]:
+    """OCR one bubble on its own, recoloured to dark text on white whatever its colours."""
+    H, W = rgb.shape[:2]
+    h = r.y1 - r.y0
+    ix, iy = int(min(0.25 * h, 0.035 * W)), int(min(0.12 * h, 0.008 * H))   # skip the rounded corners
+    x0, x1, y0, y1 = r.x0 + ix, r.x1 - ix, r.y0 + iy, r.y1 - iy
+    if x1 - x0 < 20 or y1 - y0 < 12:
+        return []
+    gray = np.asarray(Image.fromarray(rgb[y0:y1, x0:x1]).convert("L")).astype(float)
+    diff = np.abs(gray - np.median(gray))
+    out = 255 - np.clip(diff * 255 / max(diff.max(), 1), 0, 255)
+    pad = 16
+    crop = ImageOps.expand(Image.fromarray(out.astype("uint8")), border=pad, fill=255)
+    lines = [l for l in _ocr_lines(crop) if l.conf >= 45]
+    for l in lines:
+        l.left += x0 - pad; l.right += x0 - pad; l.top += y0 - pad; l.bottom += y0 - pad
+    # A bubble running off the top/bottom of the chat area: drop half-hidden lines at that edge.
+    if r.cut == "top":
+        lines = [l for l in lines if l.top > y0 + 2]
+    if r.cut == "bottom":
+        lines = [l for l in lines if l.bottom < y1 - 2]
+    return lines
+
+
+def read_screen(img: Image.Image, person_names=()) -> Screen:
+    """Full screen-aware read: lines everywhere, plus each bubble read on its own."""
+    lines, size, rgb = extract_lines(img)
+    top, bottom = chat_area(rgb, lines, person_names)
+    bubbles = find_bubbles(rgb, top, bottom)
+    for r in bubbles:
+        r.lines = read_bubble(rgb, r)
+    return Screen(lines, size, rgb, top, bottom, [r for r in bubbles if r.text.strip()])

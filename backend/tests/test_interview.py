@@ -44,3 +44,23 @@ def test_how_would_they_reply_answers_are_used():
     assert r.source == "practice" and r.bubbles == ["pahinga ka muna"]
     r = index.retrieval_reply("goodnight love", [], random.Random(0))   # same intent, different words
     assert r.source == "practice" and r.bubbles == ["night night 🌙"]
+
+
+def test_fixes_from_the_chat_and_merging(tmp_path=None, monkeypatch=None):
+    import os, tempfile, importlib
+    os.environ["IMY_DATA_DIR"] = tempfile.mkdtemp()
+    from backend import db as db_mod, main
+    importlib.reload(db_mod); importlib.reload(main)
+    main.init_db()
+    a = main.create_person(main.AnswersIn(answers={"q1": "Sam", "q3": "bebe"}))
+    b = main.create_person(main.AnswersIn(answers={"q1": "Sam", "q6": "makulit, loyal, chill"}))
+    main.teach(a["id"], main.TeachIn(prompt="pagod ako", reply="pahinga ka muna bebe"))
+    out = main.teach(a["id"], main.TeachIn(prompt="ingat", reply="ikaw din\nchat ka pag uwi"))
+    assert out["taught"] == 2
+    r = main.send_chat(a["id"], main.ChatIn(message="pagod na ako"))
+    assert [x["text"] for x in r["bubbles"]] == ["pahinga ka muna bebe"] and r["bubbles"][-1]["debug"]["source"] == "practice"
+    main.teach(b["id"], main.TeachIn(prompt="hi", reply="uy"))
+    merged = main.merge_person(a["id"], main.MergeIn(from_id=b["id"]))
+    assert merged["answers"]["q6"] == "makulit, loyal, chill" and merged["answers"]["q3"] == "bebe"
+    assert [p["id"] for p in main.list_persons()] == [a["id"]]
+    assert sum(1 for s in main.list_screenshots(a["id"]) if s["platform"] == "correction") == 2
