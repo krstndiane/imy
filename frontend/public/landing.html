@@ -111,10 +111,17 @@
     <!-- ===== hero ===== -->
     <section class="mx-auto max-w-6xl px-5 pt-16 pb-20 md:pt-24 md:pb-28 grid lg:grid-cols-2 gap-14 items-center">
       <div>
-        <p class="inline-flex items-center gap-2 glass rounded-full px-3 py-1 text-xs text-cool mb-6">
-          <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span> A safer place for the message you almost sent
+        <!-- highlighted tagline: blue-tinted pill with a soft glow and a pulsing dot -->
+        <p class="inline-flex items-center gap-2.5 rounded-full px-4 py-1.5 text-sm font-semibold text-white mb-6
+                  bg-brand-600/25 border border-brand-500/70 shadow-[0_0_28px_rgba(37,99,235,.55)]">
+          <span class="relative flex w-2 h-2">
+            <span class="absolute inline-flex w-full h-full rounded-full bg-brand-500 opacity-75 animate-ping motion-reduce:hidden"></span>
+            <span class="relative inline-flex w-2 h-2 rounded-full bg-brand-500"></span>
+          </span>
+          A safer place for the message you almost sent
         </p>
-        <h1 class="text-6xl sm:text-7xl lg:text-8xl font-extrabold tracking-tight leading-[0.95]">
+        <!-- one line: whitespace-nowrap keeps "na?" next to "miss mo" -->
+        <h1 class="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[0.95] whitespace-nowrap">
           Miss mo na?
         </h1>
         <p class="mt-6 text-lg sm:text-xl text-cool leading-relaxed max-w-xl">
@@ -150,8 +157,10 @@
               </div>
             </div>
             <div class="px-4 py-5 space-y-2 min-h-[230px]">
-              <div class="flex"><span class="bubble them">Sorry haha, di ko pa kaya mag commit sa relationship.</span></div>
-              <div class="flex justify-end"><span class="bubble me">Yeah, it’s okay. I understand.</span></div>
+              <!-- the date the chat stopped; each platform writes it its own way (see PLATFORMS below) -->
+              <div id="stamp" class="sub text-center text-[11px] pb-2">Sep 26, 2026</div>
+              <div class="flex"><span class="bubble them">soo.. i guess this is it?</span></div>
+              <div class="flex justify-end"><span class="bubble me">yeah i guess so</span></div>
               <div class="receipt text-right text-[11px] sub pr-1">Delivered</div>
             </div>
             <div class="px-3 pb-3">
@@ -268,9 +277,9 @@
   <script>
     // ---- platform switcher: swap the mockup's skin + a few words ----
     const PLATFORMS = {
-      messenger: { status: 'Active 1h ago' },
-      instagram: { status: 'Active 1h ago' },
-      imessage:  { status: '' },
+      messenger: { status: 'Active 1h ago', stamp: 'SEP 26, 2026' },
+      instagram: { status: 'Active 1h ago', stamp: 'Sep 26, 2026' },
+      imessage:  { status: '', stamp: 'Saturday, Sep 26, 2026' },
     };
     const phone = document.getElementById('phone');
     const tabs = [...document.querySelectorAll('.tab')];
@@ -278,6 +287,7 @@
       const p = PLATFORMS[id];
       phone.dataset.platform = id;
       document.getElementById('status').textContent = p.status;
+      document.getElementById('stamp').textContent = p.stamp;
       tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.platform === id)));
     }
     tabs.forEach((t, i) => {

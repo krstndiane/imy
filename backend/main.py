@@ -4,6 +4,7 @@ Run from the project root:   uvicorn backend.main:app --reload
 Interactive docs:            http://localhost:8000/docs
 """
 import json
+import re
 import shutil
 import uuid
 from contextlib import asynccontextmanager
@@ -16,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import claude, engine, ocr, parser, style as style_mod
+from . import claude, engine, importers, ocr, parser, style as style_mod
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -259,6 +260,85 @@ def import_text(pid: int, body: TextImportIn):
         shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
         shot["needs_review"] = needs_review
         return shot
+
+
+# ---------------------------------------------------------------- chat export files
+# Two steps, because one export can hold many chats and many senders:
+#   1. POST import-file   read the file, save the result for a moment, show the chats in it
+#   2. POST import-commit you pick the chat + which sender is them / you -> messages are stored
+IMPORT_DIR = DATA_DIR / "imports"
+
+
+def _cleanup_old_imports(max_age_s: int = 24 * 3600) -> None:
+    import time
+    IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    for f in IMPORT_DIR.glob("*.json"):
+        if time.time() - f.stat().st_mtime > max_age_s:
+            f.unlink(missing_ok=True)
+
+
+@app.post("/api/persons/{pid}/import-file")
+def import_file(pid: int, file: UploadFile = File(...)):
+    """Read a WhatsApp / Messenger / Instagram / Telegram export and list the chats inside."""
+    with db() as conn:
+        person = _person_dict(_person_row(conn, pid))
+    try:
+        convs = importers.read_export(file.filename or "", file.file)
+    except importers.ExportError as exc:
+        raise HTTPException(400, str(exc))
+    owner = importers.owner_name(convs)
+    _cleanup_old_imports()
+    token = uuid.uuid4().hex
+    (IMPORT_DIR / f"{token}.json").write_text(json.dumps([
+        {"id": c.id, "title": c.title, "platform": c.platform,
+         "messages": [[m.sender, m.text, m.ts] for m in c.messages]} for c in convs]))
+    out = []
+    for c in convs:
+        their, mine = importers.guess_roles(c, _known_names(person["answers"]), owner)
+        stamps = [m.ts for m in c.messages if m.ts]
+        out.append({"id": c.id, "title": c.title, "platform": c.platform, "message_count": len(c.messages),
+                    "participants": c.participants(), "guess_person": their, "guess_me": mine,
+                    "first": min(stamps) if stamps else None, "last": max(stamps) if stamps else None})
+    return {"token": token, "filename": file.filename, "conversations": out}
+
+
+class ImportCommitIn(BaseModel):
+    token: str
+    conversation_id: str
+    person_name: str        # the sender who is the person you're teaching imy
+    me_name: str            # the sender who is you (everyone else in a group chat is skipped)
+
+
+@app.post("/api/persons/{pid}/import-commit")
+def import_commit(pid: int, body: ImportCommitIn):
+    if not re.fullmatch(r"[0-9a-f]{32}", body.token):
+        raise HTTPException(400, "Bad import token.")
+    path = IMPORT_DIR / f"{body.token}.json"
+    if not path.exists():
+        raise HTTPException(410, "That upload expired. Please choose the file again.")
+    conv = next((c for c in json.loads(path.read_text()) if c["id"] == body.conversation_id), None)
+    if not conv:
+        raise HTTPException(404, "Chat not found in that file.")
+    if body.person_name == body.me_name:
+        raise HTTPException(400, "Pick different senders for them and for you.")
+    roles = {body.person_name: "person", body.me_name: "user"}
+    msgs = [{"speaker": roles[s], "text": t, "ts": ts} for s, t, ts in conv["messages"] if s in roles]
+    if not any(m["speaker"] == "person" for m in msgs):
+        raise HTTPException(400, f"{body.person_name} has no messages in this chat.")
+    sessions = importers.split_sessions(msgs)
+    title = conv["title"] or "Chat export"
+    with db() as conn:
+        _person_row(conn, pid)
+        for n, chunk in enumerate(sessions, 1):
+            cur = conn.execute(
+                "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
+                (pid, f"{title} · talk {n} of {len(sessions)}", None, conv["platform"], "", now()))
+            _store_messages(conn, pid, cur.lastrowid, chunk)
+        bump_version(conn, pid)
+    path.unlink(missing_ok=True)
+    return {"sessions": len(sessions), "messages": len(msgs),
+            "person_messages": sum(m["speaker"] == "person" for m in msgs),
+            "user_messages": sum(m["speaker"] == "user" for m in msgs)}
 
 
 @app.get("/api/persons/{pid}/screenshots")

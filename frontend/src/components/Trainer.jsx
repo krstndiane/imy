@@ -93,7 +93,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved, theme, on
           </>} />
       )}
       {step === 2 && (
-        <Upload pid={pid} shots={shots} onAdded={addShots} personName={personName}
+        <Upload pid={pid} shots={shots} onAdded={addShots} onImported={reload} personName={personName}
           footer={<>
             <button className="btn ghost" onClick={() => setStep(1)}>Back</button>
             <button className="btn primary" onClick={() => setStep(3)}>Review what was read</button>
@@ -170,7 +170,7 @@ function Interview({ questions, answers, setAnswers, footer }) {
 }
 
 /* ---------- Step 2: screenshots / pasted text ---------- */
-function Upload({ pid, shots, onAdded, personName, footer }) {
+function Upload({ pid, shots, onAdded, onImported, personName, footer }) {
   const [queue, setQueue] = useState([]);
   const [drag, setDrag] = useState(false);
   const [pasted, setPasted] = useState("");
@@ -178,6 +178,7 @@ function Upload({ pid, shots, onAdded, personName, footer }) {
   const [pasteMsg, setPasteMsg] = useState("");
   const input = useRef();
   const imageCount = shots.filter((s) => s.url).length;
+  const exportedCount = shots.filter((s) => !s.url).reduce((n, s) => n + s.messages.length, 0);
 
   async function handleFiles(fileList) {
     const files = [...fileList].filter((f) => f.type.startsWith("image/"));
@@ -206,12 +207,16 @@ function Upload({ pid, shots, onAdded, personName, footer }) {
     } catch (e) { setPasteMsg(e.message); }
   }
 
+  const enough = imageCount >= RECOMMENDED || exportedCount >= 200;
   return (
     <section className="panel">
+      <ExportImport pid={pid} personName={personName} onImported={onImported} />
+
       <div className="count">
         <strong>{imageCount}</strong> screenshot{imageCount === 1 ? "" : "s"} added
-        <span className="muted"> · {imageCount >= RECOMMENDED ? "that’s a good amount" : `aim for at least ${RECOMMENDED}`}</span>
-        <div className="bar"><div style={{ width: Math.min(100, (imageCount / RECOMMENDED) * 100) + "%" }} /></div>
+        {exportedCount > 0 && <> · <strong>{exportedCount}</strong> messages from chat exports</>}
+        <span className="muted"> · {enough ? "that’s a good amount" : `aim for at least ${RECOMMENDED} screenshots, or import a chat`}</span>
+        <div className="bar"><div style={{ width: enough ? "100%" : Math.min(100, (imageCount / RECOMMENDED) * 100) + "%" }} /></div>
       </div>
 
       <div className={"drop" + (drag ? " over" : "")}
@@ -262,10 +267,134 @@ function Upload({ pid, shots, onAdded, personName, footer }) {
   );
 }
 
+/* ---------- Chat export import (WhatsApp / Messenger / Instagram / Telegram) ----------
+   1. you pick the file you downloaded from the app
+   2. the server lists the chats inside it; you pick one
+   3. you say which sender is them and which is you, then Import */
+const HOW_TO = [
+  { app: "WhatsApp", steps: ["Open the chat with them", "Tap their name (iPhone) or ⋮ > More (Android)", "Export chat > Without media", "Save or AirDrop the file to this Mac, then choose it here (.zip or .txt)"] },
+  { app: "Messenger", steps: ["Go to facebook.com/dyi > Download or transfer information", "Specific types of information > Messages", "Download to device, Format: JSON, Date range: All time", "When Facebook says it's ready, download the .zip and choose it here",
+      "Newer chats are end-to-end encrypted and aren't in that download. On messenger.com: profile photo > Privacy & safety > End-to-end encrypted chats > Message storage > Download secure storage data (screenshots work for those if this file isn't read)"] },
+  { app: "Instagram", steps: ["Accounts Center > Your information and permissions > Download your information", "Messages only, Format: JSON", "Download the .zip and choose it here"] },
+  { app: "Telegram", steps: ["Telegram Desktop app > open the chat > ⋮ > Export chat history", "Untick photos/videos, Format: Machine-readable JSON", "Choose the result.json file here"] },
+];
+
+function ExportImport({ pid, personName, onImported }) {
+  const [busy, setBusy] = useState("");          // "", "reading", "saving"
+  const [found, setFound] = useState(null);      // server reply: { token, conversations }
+  const [chatId, setChatId] = useState(null);
+  const [them, setThem] = useState("");
+  const [me, setMe] = useState("");
+  const [filter, setFilter] = useState("");
+  const [msg, setMsg] = useState("");
+  const input = useRef();
+
+  const chat = found?.conversations.find((c) => c.id === chatId);
+  const pick = (c) => { setChatId(c.id); setThem(c.guess_person || ""); setMe(c.guess_me || ""); };
+
+  async function read(file) {
+    if (!file) return;
+    setBusy("reading"); setMsg(""); setFound(null); setChatId(null);
+    try {
+      const res = await api.importFile(pid, file);
+      setFound(res);
+      if (res.conversations.length === 1) pick(res.conversations[0]);
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(""); }
+  }
+
+  async function save() {
+    setBusy("saving"); setMsg("");
+    try {
+      const r = await api.importCommit(pid, { token: found.token, conversation_id: chatId, person_name: them, me_name: me });
+      setMsg(`Imported ${r.person_messages} messages from ${personName} and ${r.user_messages} from you, as ${r.sessions} separate talk${r.sessions === 1 ? "" : "s"}.`);
+      setFound(null); setChatId(null);
+      onImported?.();
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(""); }
+  }
+
+  const day = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString() : "");
+  const list = (found?.conversations || []).filter((c) => c.title.toLowerCase().includes(filter.toLowerCase()));
+
+  return (
+    <div className="export">
+      <h3>Import a chat export <span className="tag">best</span></h3>
+      <p className="muted small">
+        Download your chat from the app itself and add it here. Exact who-said-what, emojis included, and usually
+        thousands of messages instead of a few screenshots. It stays on this computer.
+      </p>
+      <details className="how">
+        <summary>How do I get the file?</summary>
+        {HOW_TO.map((h) => (
+          <div key={h.app}><strong className="small">{h.app}</strong><ol>{h.steps.map((s) => <li key={s}>{s}</li>)}</ol></div>
+        ))}
+      </details>
+
+      <button className="btn" disabled={!!busy} onClick={() => input.current.click()}>
+        {busy === "reading" ? "Reading the file…" : "Choose export file"}
+      </button>
+      <input ref={input} type="file" accept=".zip,.json,.txt" hidden onChange={(e) => { read(e.target.files[0]); e.target.value = ""; }} />
+      {msg && <p className="small" role="status" style={{ marginTop: 10 }}>{msg}</p>}
+
+      {found && found.conversations.length > 1 && (
+        <>
+          <p className="small" style={{ marginTop: 14 }}><strong>{found.conversations.length} chats</strong> in this file. Which one is with {personName}?</p>
+          {found.conversations.length > 8 && <input placeholder="Search by name" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+          <ul className="chat-list">
+            {list.map((c) => (
+              <li key={c.id}>
+                <button className={c.id === chatId ? "picked" : ""} onClick={() => pick(c)}>
+                  <span>{c.title}</span>
+                  <span className="muted small">{c.message_count} messages{c.last ? ` · until ${day(c.last)}` : ""}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {chat && (
+        <>
+          <p className="small" style={{ marginTop: 14 }}>
+            <strong>{chat.title}</strong>: {chat.message_count} messages{chat.first ? `, ${day(chat.first)} to ${day(chat.last)}` : ""}.
+            {chat.participants.length > 2 && " This is a group chat, so only the two people you pick below are used."}
+          </p>
+          <div className="who-pick">
+            <label className="field">
+              <span className="q">Which one is {personName}?</span>
+              <select value={them} onChange={(e) => setThem(e.target.value)}>
+                <option value="">Choose…</option>
+                {chat.participants.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.count})</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span className="q">Which one is you?</span>
+              <select value={me} onChange={(e) => setMe(e.target.value)}>
+                <option value="">Choose…</option>
+                {chat.participants.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.count})</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="actions" style={{ marginTop: 4 }}>
+            <button className="btn primary" disabled={!!busy || !them || !me || them === me} onClick={save}>
+              {busy === "saving" ? "Importing…" : "Import this chat"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------- Step 3: review and fix ---------- */
+const COLLAPSE_OVER = 12;   // imported talks longer than this start folded, so the page stays fast
+
 function Review({ shots, flagged, personName, reload, footer }) {
   const total = shots.reduce((n, s) => n + s.messages.length, 0);
   const act = (fn) => async (...args) => { await fn(...args); await reload(); };
+  const [open, setOpen] = useState(new Set());
+  const folded = (s) => !s.url && s.messages.length > COLLAPSE_OVER && !open.has(s.id);
 
   return (
     <section className="panel">
@@ -284,6 +413,11 @@ function Review({ shots, flagged, personName, reload, footer }) {
             <button className="btn small" onClick={act(() => api.flipScreenshot(s.id))}>Swap sides</button>
             <button className="btn small ghost" onClick={act(() => api.deleteScreenshot(s.id))}>Remove</button>
           </header>
+          {folded(s) ? (
+            <div className="shot-body">
+              <button className="link" onClick={() => setOpen(new Set([...open, s.id]))}>Show {s.messages.length} messages</button>
+            </div>
+          ) : (
           <div className="shot-body">
             {s.url && <img src={s.url} alt={`Screenshot ${idx + 1}`} loading="lazy" />}
             <ul className="msgs">
@@ -304,6 +438,7 @@ function Review({ shots, flagged, personName, reload, footer }) {
               ))}
             </ul>
           </div>
+          )}
         </article>
       ))}
       <div className="actions">{footer}</div>

@@ -30,6 +30,13 @@ export const api = {
     return fetch(`/api/persons/${id}/screenshots`, { method: "POST", body: form }).then(handle);
   },
   importText: (id, text, person_name) => send("POST", `/api/persons/${id}/import-text`, { text, person_name }),
+  // Chat export files: step 1 reads the file and lists the chats in it, step 2 saves the one you pick.
+  importFile: (id, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(`/api/persons/${id}/import-file`, { method: "POST", body: form }).then(handle);
+  },
+  importCommit: (id, body) => send("POST", `/api/persons/${id}/import-commit`, body),
   flipScreenshot: (sid) => send("POST", `/api/screenshots/${sid}/flip`),
   deleteScreenshot: (sid) => send("DELETE", `/api/screenshots/${sid}`),
 

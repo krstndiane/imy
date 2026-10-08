@@ -55,7 +55,14 @@ pytest backend/tests -q
 1. **Put your own messages on the right.** That's how the parser decides who is who. Use "Swap sides" in the review step if a screenshot is the other way round.
 2. **Use full-width, uncropped, high-resolution screenshots.** Light or dark mode is fine.
 3. **Always do the Review step.** OCR is never perfect; fix wrong speakers and typos there. This is the biggest accuracy gain.
-4. **Paste text when you can.** WhatsApp "Export chat" or `Name: message` lines are more accurate than OCR and keep emojis.
+4. **Import a chat export when you can (best).** In the Screenshots step, use **Import a chat export** with the file the app itself gives you. It's exact (no OCR), keeps emojis, and usually has thousands of messages. Supported, all read by `backend/importers.py`:
+   - **WhatsApp:** chat > Export chat > Without media (`.zip` or `.txt`)
+   - **Messenger:** facebook.com/dyi > Messages > Format **JSON** (`.zip`, or one `message_1.json`). Newer end-to-end encrypted chats are a separate download (messenger.com > Privacy & safety > End-to-end encrypted chats > Message storage)
+   - **Instagram:** Download your information > Messages > **JSON**
+   - **Telegram Desktop:** Export chat history > **JSON** (`result.json`)
+
+   The chat is split into separate "talks" wherever there were 6+ hours of silence (`SESSION_GAP_HOURS` in `importers.py`). With a big import, try `IMY_REUSE_LINES=1` so replies can be their real lines.
+   Pasting `Name: message` lines also still works.
 5. **More back-and-forth is better than more screenshots.** Replies come from exchanges where you said something and they answered.
 
 ## How a reply is made (`backend/engine.py`)
