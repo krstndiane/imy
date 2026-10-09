@@ -69,6 +69,10 @@ export const api = {
   signIn: (email, password) => send("POST", "/api/auth/signin", { email, password }),
   signOut: () => send("POST", "/api/auth/signout"),
   changePassword: (old_password, new_password) => send("PUT", "/api/auth/password", { old_password, new_password }),
+  // Forgot password: email a link, check the link still works, then set the new password with it.
+  forgotPassword: (email) => send("POST", "/api/auth/forgot", { email }),
+  checkReset: (token) => send("POST", "/api/auth/reset/check", { token }),
+  resetPassword: (token, password) => send("POST", "/api/auth/reset", { token, password }),
   deleteAccount: (password, confirm) => send("DELETE", "/api/auth/account", { password, confirm }),
 
   questions: () => send("GET", "/api/questions"),

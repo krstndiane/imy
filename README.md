@@ -83,7 +83,14 @@ them rather than to anyone who knows the address.
 - **Staying signed in** is one cookie holding a random token; only a hash of that token is stored,
   and it's `HttpOnly` (JavaScript can't read it), `SameSite=Lax`, and `Secure` when imy is on
   HTTPS. Sessions last 30 days. Signing out deletes the session on the server.
-- **Changing your password** signs out every other browser.
+- **Changing your password** signs out every other browser, and emails a short "your password was
+  changed" notice so a stranger changing it doesn't go unnoticed.
+- **Forgot password** (on the sign-in page) emails a link, never a password: a password in an inbox
+  stays readable forever. The link opens "Choose a new password", works **once**, for **30 minutes**,
+  and using it signs out every device and cancels any other links. Only a hash of it is stored, the
+  page answers the same whether or not an account exists, and each account gets at most 3 emails an
+  hour. The link points at `IMY_PUBLIC_URL`, never at whatever address the request claims to come
+  from. Setting up email is under **Going live** below.
 - **Sign-in attempts** are rate limited, and a wrong email and a wrong password give the same answer
   (and take the same time), so nobody can use the form to find out which emails have accounts.
 - **"Delete everything"** (account menu) removes the account, every person, every message and every
@@ -253,12 +260,12 @@ paid; it also reads screenshots).
 ## Project layout
 ```
 backend/   main.py (API)  db.py (SQLite)  auth.py (accounts + sign-in)  backup.py  usage.py (daily AI limits)
-           preflight.py (launch checks)  admin.py (accounts from the command line)
+           mailer.py (forgot-password emails)  preflight.py (launch checks)  admin.py (accounts from the command line)
            ocr.py + parser.py + looks.py (screenshots)  importers.py (chat files)
            engine.py + smalltalk.py + personality.py + style.py (replies)  llm.py (free AI)
            media.py (photos shared in a chat + describing them)  notes.py (what they remember)  questions.json  tests/
 frontend/  src/App.jsx  src/platforms.js  src/styles.css  dist/ (built)  public/{privacy,terms,landing}.html
-           src/components/{Auth,Account,Sidebar,Trainer,TrainPanel,Chat,ChatPanels,Avatar,Icon,ErrorBoundary}.jsx
+           src/components/{Auth,ResetPassword,Account,Sidebar,Trainer,TrainPanel,Chat,ChatPanels,Avatar,Icon,ErrorBoundary}.jsx
 data/      created on first run: imy.db + uploads/ (screenshots, profile pictures, shared photos) + backups/
 ```
 
@@ -283,8 +290,33 @@ instead of a blank page, and the website reconnects by itself if the server rest
 ### Going live
 
 **1. Settings on the host** (from `.env.example`; never upload `.env` itself):
-`GROQ_API_KEY`, `IMY_CONTACT_EMAIL`, `IMY_BACKUP_DAILY=1`, `TZ=Asia/Manila`, and leave `IMY_SECURE_COOKIES` unset.
+`GROQ_API_KEY`, `IMY_CONTACT_EMAIL`, `IMY_PUBLIC_URL`, the email settings below, `IMY_BACKUP_DAILY=1`,
+`TZ=Asia/Manila`, and leave `IMY_SECURE_COOKIES` unset.
 Use a **fresh database** on the server — don't copy your own `data/` folder up, it has your test accounts and chats in it.
+
+**Email, for "Forgot password".** Without it, anyone who forgets their password is locked out for good.
+imy sends through any email service that offers SMTP:
+
+| Setting | Gmail (fine to start) | Any other service |
+|---|---|---|
+| `IMY_SMTP_HOST` | `smtp.gmail.com` | the SMTP host it gives you |
+| `IMY_SMTP_PORT` | `587` | usually `587` |
+| `IMY_SMTP_USER` | the Gmail address | the SMTP login it gives you |
+| `IMY_SMTP_PASSWORD` | an **App Password** (Google Account → Security → 2-Step Verification must be on → App passwords) | the SMTP key it gives you |
+| `IMY_MAIL_FROM` | `imy <that Gmail address>` | an address on a domain you've verified with it |
+| `IMY_PUBLIC_URL` | `https://your.address` | same |
+
+Make a separate Gmail account for imy rather than using your own: its address is what people see, and an App
+Password can send as that account. A personal Gmail can send to about 500 people a day, which is plenty for
+password resets at the start; when you outgrow it, a sending service (Brevo, Resend, Amazon SES and others)
+with your own domain lands in fewer spam folders. Then send yourself a test:
+
+```bash
+python -m backend.mailer you@example.com
+```
+
+On your own computer you don't need any of this: with no email set up, the link is printed in the Terminal
+window running imy, and the page says so.
 
 **2. Run the checks.** On the server (most hosts have a "shell" or "console" button):
 
@@ -293,7 +325,8 @@ python -m backend.preflight                                # settings, database,
 python -m backend.preflight --url https://your.address     # and the live site, from outside
 ```
 
-It checks everything a computer can: the contact address on both pages, HTTPS and the http→https redirect,
+It checks everything a computer can: email for "forgot password" (and, live, that the site can send it),
+the contact address on both pages, HTTPS and the http→https redirect,
 that signed-out requests for people and files are refused, the secure cookie setting, daily backups and that
 the newest one opens, free disk, test-looking accounts, the daily AI limit, Gemini's free tier, and that
 `.env` was never committed. It changes nothing, and exits with an error if anything must be fixed.

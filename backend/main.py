@@ -31,7 +31,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from . import auth, backup, claude, engine, importers, llm, looks, media as media_mod, notes, ocr, parser, style as style_mod, usage
+from . import auth, backup, claude, engine, importers, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,7 +64,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Pages anyone can reach without signing in. Everything else under /api and every uploaded file
 # needs an account - that's what keeps one person's chats out of another person's browser.
 PUBLIC_PATHS = {"/api/health", "/api/status", "/api/auth/me",
-                "/api/auth/signup", "/api/auth/signin", "/api/auth/signout"}
+                "/api/auth/signup", "/api/auth/signin", "/api/auth/signout",
+                "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/check"}
 
 
 async def identify(request: Request, call_next):
@@ -103,7 +104,8 @@ async def unexpected_error(request: Request, exc: Exception):
 
 # A small per-visitor speed limit, so one person (or a bot) can't use up the free AI limit or the CPU.
 LIMITS = {"chat": (40, 60), "upload": (120, 60), "import": (20, 60),
-          "auth": (12, 300)}        # sign-in guesses: a dozen tries per 5 minutes, per visitor
+          "auth": (12, 300),        # sign-in guesses: a dozen tries per 5 minutes, per visitor
+          "forgot": (5, 900)}       # "email me a reset link": 5 per 15 minutes, per visitor
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
 _hits_lock = threading.Lock()
 _swept_at = 0.0
@@ -256,7 +258,7 @@ def who_am_i():
 
 def wipe_account(user_id: int) -> list[int]:
     """Remove an account and everything under it: people, messages, chats, photos, screenshots,
-    sign-ins, usage counts, and every uploaded file. Used by "Delete everything" and by
+    sign-ins, reset links, usage counts, and every uploaded file. Used by "Delete everything" and by
     `python -m backend.admin remove`. Returns the ids of the people removed."""
     with db() as conn:
         pids = [r["id"] for r in conn.execute("SELECT id FROM persons WHERE user_id = ?", (user_id,))]
@@ -272,6 +274,7 @@ def wipe_account(user_id: int) -> list[int]:
             conn.execute("DELETE FROM screenshots WHERE person_id = ?", (pid,))
         conn.execute("DELETE FROM persons WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM ai_usage WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     for p in paths:
@@ -314,7 +317,81 @@ def set_password(body: PasswordIn, request: Request = None):
     except auth.AuthError as exc:
         raise HTTPException(400, str(exc))
     token = auth.start_session(me["id"], request.headers.get("user-agent", "") if request else "")
+    _tell_password_changed(me["email"], request)
     return _signed_in(me, token, request)      # changing it signs out every other browser; keep this one
+
+
+# ---------------------------------------------------------------- forgot password
+# 1. The sign-in page sends an email address to /forgot. If there's an account, imy emails it a link:
+#       https://your-site/#reset=<token>
+#    The token comes after "#", so browsers never send it to the server: it stays out of server
+#    and host logs, and out of the "Referer" other sites would see.
+# 2. Opening the link shows "Choose a new password" (the page asks /reset/check first, so an old
+#    link says so straight away instead of after typing a new password).
+# 3. /reset sets the password, signs out every device, signs in this one, and emails a notice.
+class ForgotIn(BaseModel):
+    email: str = ""
+
+
+class ResetCheckIn(BaseModel):
+    token: str = ""
+
+
+class ResetIn(BaseModel):
+    token: str = ""
+    password: str = ""
+
+
+def _tell_password_changed(email: str, request: Request | None) -> None:
+    site = mailer.site_url(request)
+    mailer.send_later(email, *mailer.changed_email(site, email), print_if_off=mailer.is_local(site))
+
+
+@app.post("/api/auth/forgot")
+def forgot_password(body: ForgotIn, request: Request = None):
+    """Email a reset link. Always the same answer whether or not the account exists - otherwise
+    this would tell anyone who has an imy account."""
+    rate_limit(request, "forgot")
+    email = (body.email or "").strip().lower()
+    if not auth.EMAIL_RE.match(email) or len(email) > 254:
+        raise HTTPException(400, "That doesn't look like an email address.")
+    site = mailer.site_url(request)
+    local = mailer.is_local(site)
+    if not site or not (mailer.configured() or local):
+        # Said to everyone alike (it depends on the site, not the account), so it gives nothing away.
+        who = contact_email()
+        print("[imy] someone asked for a password reset, but email isn't set up "
+              "(IMY_SMTP_HOST and IMY_PUBLIC_URL; see backend/mailer.py)", flush=True)
+        raise HTTPException(503, "imy can't send email yet, so passwords can't be reset here. "
+                                 + (f"Write to {who} for help." if who else "Please try again later."))
+    found = auth.start_reset(email)
+    if found:
+        user, token = found
+        link = f"{site}/#reset={token}"
+        mailer.send_later(user["email"], *mailer.reset_email(link, auth.RESET_MINUTES, user["email"]), print_if_off=local)
+    # "printed": email is off and this is your own computer, so the link went to the Terminal.
+    return {"ok": True, "minutes": auth.RESET_MINUTES, "printed": not mailer.configured()}
+
+
+@app.post("/api/auth/reset/check")
+def check_reset_link(body: ResetCheckIn, request: Request = None):
+    rate_limit(request, "auth")
+    user = auth.check_reset(body.token)
+    if not user:
+        raise HTTPException(400, auth.RESET_EXPIRED)
+    return {"email": user["email"], "minutes": auth.RESET_MINUTES}
+
+
+@app.post("/api/auth/reset")
+def reset_password(body: ResetIn, request: Request = None):
+    rate_limit(request, "auth")
+    try:
+        user = auth.finish_reset(body.token, body.password)
+    except auth.AuthError as exc:
+        raise HTTPException(400, str(exc))
+    token = auth.start_session(user["id"], request.headers.get("user-agent", "") if request else "")
+    _tell_password_changed(user["email"], request)
+    return _signed_in(user, token, request)
 
 
 # ---------------------------------------------------------------- who owns what

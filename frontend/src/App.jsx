@@ -5,9 +5,15 @@ import Sidebar from "./components/Sidebar";
 import Trainer from "./components/Trainer";
 import Chat from "./components/Chat";
 import Auth from "./components/Auth";
+import ResetPassword from "./components/ResetPassword";
 import ErrorBoundary from "./components/ErrorBoundary";
 
+// A "forgot password" email links to  /#reset=<token>.  The part after # never reaches the server.
+const resetTokenInUrl = () => (window.location.hash.match(/^#reset=([A-Za-z0-9_-]{20,})$/) || [])[1] || null;
+const clearUrlHash = () => window.history.replaceState(null, "", window.location.pathname + window.location.search);
+
 /* App: works out who's signed in, owns the list of people, and decides which screen to show.
+     a reset link    -> "Choose a new password" (whoever is signed in)
      nobody signed in -> the sign-in page
      mode "chat"      -> Chat Mode with the selected person
      mode "train"     -> Training Mode (trainId = null means "creating someone new")
@@ -19,7 +25,14 @@ export default function App() {
   const [mode, setMode] = useState("chat");
   const [trainId, setTrainId] = useState(null);
   const [offline, setOffline] = useState(false);
+  const [resetToken, setResetToken] = useState(resetTokenInUrl);
+  const [authStart, setAuthStart] = useState(null);   // { mode, email } to open the sign-in page on "forgot"
   const retry = useRef(null);
+  useEffect(() => {            // a reset link opened in a tab that already has imy open
+    const onHash = () => { const t = resetTokenInUrl(); if (t) setResetToken(t); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   // Light or dark: remembered in this browser.
   const [theme, setTheme] = useState(() => load("imy.theme", "dark"));   // dark is the brand look (same as the landing page)
   useEffect(() => {
@@ -77,9 +90,21 @@ export default function App() {
     refresh();
   };
 
+  if (resetToken) {
+    return (
+      <ResetPassword
+        token={resetToken}
+        onSignedIn={(u) => { clearUrlHash(); setResetToken(null); setUser(u); }}
+        onNewLink={(email) => { clearUrlHash(); setResetToken(null); setAuthStart({ mode: "forgot", email: email || "" }); }}
+      />
+    );
+  }
   // Still asking the server who's signed in: nothing yet, so the page doesn't flash the wrong screen.
   if (user === undefined) return <div className="app booting" aria-busy="true" />;
-  if (!user) return <Auth onSignedIn={setUser} />;
+  if (!user) {
+    return <Auth key={authStart ? "forgot" : "start"} onSignedIn={(u) => { setAuthStart(null); setUser(u); }}
+      startMode={authStart?.mode} startEmail={authStart?.email} />;
+  }
 
   return (
     <div className="app">

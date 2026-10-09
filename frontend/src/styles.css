@@ -633,3 +633,10 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .check.consent { margin: 14px 0 0; padding: 12px; border-radius: 12px; background: var(--soft); font-size: .86rem; }
 /* the reminder at the top of a chat that the replies are written by AI */
 .sep.event.ai-note span { max-width: 32em; text-align: center; line-height: 1.35; }
+
+/* Forgot password: the link sits on the same line as the "Password" label; the sent / reset screens reuse the card. */
+.pw-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.linky.small { font-size: .8rem; text-decoration: none; }
+.linky.small:hover { text-decoration: underline; }
+.auth-card .sent .small { margin: 10px 0 0; }
+.auth-card a.linky { text-decoration: none; }

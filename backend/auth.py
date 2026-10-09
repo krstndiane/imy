@@ -147,6 +147,72 @@ def change_password(user_id: int, old: str, new: str) -> None:
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
 
 
+# ---------------------------------------------------------------- forgot password
+# Nobody gets emailed a new password: it would sit readable in their inbox for good, and anyone who
+# saw it once could sign in. They get a link instead. Opening it lets them choose a new password,
+# once, within RESET_MINUTES. Like sessions, only a hash of the link is stored, so a copy of the
+# database can't be used to reset anyone's password.
+RESET_MINUTES = 30
+RESETS_PER_HOUR = 3        # links emailed per account per hour, so nobody can flood someone's inbox
+RESET_EXPIRED = "This link has expired or was already used. Ask for a new one."
+
+
+def start_reset(email: str) -> tuple[dict, str] | None:
+    """Make a "forgot password" link for this email. Returns (user, token), or None when there's
+    no such account or it has asked too often. The page says the same thing either way, so it
+    can't be used to find out who has an account."""
+    email = (email or "").strip().lower()
+    if not EMAIL_RE.match(email):
+        return None
+    token = secrets.token_urlsafe(32)
+    t = datetime.now(timezone.utc)
+    hour_ago = (t - timedelta(hours=1)).isoformat(timespec="seconds")
+    expires = (t + timedelta(minutes=RESET_MINUTES)).isoformat(timespec="seconds")
+    with db() as conn:
+        user = conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
+        if not user:
+            return None
+        recent = conn.execute("SELECT COUNT(*) FROM password_resets WHERE user_id = ? AND created_at > ?",
+                              (user["id"], hour_ago)).fetchone()[0]
+        if recent >= RESETS_PER_HOUR:
+            return None
+        conn.execute("INSERT INTO password_resets (token_hash, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+                     (_hash_token(token), user["id"], now(), expires))
+    return dict(user), token
+
+
+def check_reset(token: str) -> dict | None:
+    """The account a link belongs to, if it still works (not used, not expired)."""
+    if not token:
+        return None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT u.id, u.email FROM password_resets r JOIN users u ON u.id = r.user_id "
+            "WHERE r.token_hash = ? AND r.used_at IS NULL AND r.expires_at > ?", (_hash_token(token), now())).fetchone()
+    return dict(row) if row else None
+
+
+def finish_reset(token: str, new_password: str) -> dict:
+    """Use a link: set the new password, sign out every device, and make every other link for this
+    account stop working. Returns the account. Marking the link used and changing the password
+    happen in one step, so the same link can't be used twice even if it's opened twice at once."""
+    check_new_password(new_password)
+    if not token:
+        raise AuthError(RESET_EXPIRED)
+    th = _hash_token(token)
+    new_hash = hash_password(new_password)          # slow on purpose, so done before the write queue
+    with db() as conn:
+        claimed = conn.execute("UPDATE password_resets SET used_at = ? "
+                               "WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?", (now(), th, now()))
+        if claimed.rowcount != 1:
+            raise AuthError(RESET_EXPIRED)
+        uid = conn.execute("SELECT user_id FROM password_resets WHERE token_hash = ?", (th,)).fetchone()[0]
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, uid))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM password_resets WHERE user_id = ? AND token_hash != ?", (uid, th))
+        return dict(conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone())
+
+
 # ---------------------------------------------------------------- staying signed in
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -193,10 +259,13 @@ def end_all_sessions(user_id: int) -> None:
 
 
 def sweep_sessions() -> None:
-    """Drop sessions that ran out, so the table doesn't grow forever."""
+    """Drop sessions that ran out, so the table doesn't grow forever. Old reset links too (kept a
+    day past their expiry: the "3 per hour" limit counts recent ones)."""
     try:
+        day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
         with db() as conn:
             conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now(),))
+            conn.execute("DELETE FROM password_resets WHERE expires_at <= ?", (day_ago,))
     except Exception as exc:
         print(f"[imy] couldn't tidy old sessions: {exc}")
 

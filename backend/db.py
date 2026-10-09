@@ -1,8 +1,9 @@
 """db.py - SQLite storage.
 
-Eight tables (the eighth, ai_usage, counts AI use per account per day - see usage.py):
+Nine tables (ai_usage counts AI use per account per day - see usage.py):
   users         one row per account; `sessions` is how a browser stays signed in (see auth.py)
   sessions      live sign-ins, as hashes of the cookie token
+  password_resets  "forgot password" links that were emailed, as hashes; each works once, for 30 minutes
   persons       one row per person you've set up (+ their interview answers as JSON), owned by a user
   screenshots   one row per uploaded screenshot (or pasted text import)
   messages      every extracted message, labelled speaker = 'user' or 'person'
@@ -42,6 +43,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   user_agent TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,          -- only the hash of the emailed link, same as sessions
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT                          -- set the moment the link is used, so it can't be used twice
 );
 CREATE TABLE IF NOT EXISTS persons (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_person ON messages(person_id, screenshot
 CREATE INDEX IF NOT EXISTS idx_chat_person ON chat_messages(person_id, id);
 CREATE INDEX IF NOT EXISTS idx_media_person ON media(person_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id, created_at);
 """
 
 

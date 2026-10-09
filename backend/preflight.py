@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 from . import claude  # noqa: F401  (loads .env, the same way imy does)
-from . import backup, usage
+from . import backup, mailer, usage
 from .db import DATA_DIR, DB_PATH
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,6 +76,8 @@ def check_settings() -> None:
     else:
         ok(f"Contact email is set ({email})")
 
+    check_email()
+
     origins = [o.strip() for o in env("IMY_ORIGINS").split(",") if o.strip()]
     plain = [o for o in origins if o.startswith("http://") and "localhost" not in o and "127.0.0.1" not in o]
     if plain:
@@ -108,6 +110,32 @@ def check_settings() -> None:
         warn("TZ isn't set", "Set TZ=Asia/Manila so the daily AI limit resets at your midnight (the Dockerfile does).")
     else:
         ok(f"Time zone {env('TZ')}")
+
+
+def check_email() -> None:
+    """Forgot password needs two things: an email service, and the site's real address for the link."""
+    site = mailer.site_url()
+    if not site:
+        fail("No IMY_PUBLIC_URL", "'Forgot password' emails need the site's address for their link, "
+             "e.g. IMY_PUBLIC_URL=https://imy.example.com")
+    elif mailer.is_local(site):
+        warn(f"Reset links point to your own computer ({site})",
+             "Fine for testing. On the server, set IMY_PUBLIC_URL to the https:// address.")
+    elif not site.startswith("https://"):
+        fail(f"IMY_PUBLIC_URL is plain http ({site})", "Use the https:// address: a reset link is as good as a password.")
+    else:
+        ok(f"Reset links point to {site}")
+    if not mailer.configured():
+        fail("Email isn't set up (IMY_SMTP_HOST)", "Without it, anyone who forgets their password is locked out "
+             "for good. See 'Email' in the README, then send yourself a test: python -m backend.mailer you@example.com")
+    elif not mailer.sender():
+        fail("No IMY_MAIL_FROM", "Set IMY_MAIL_FROM (or IMY_SMTP_USER) to the address emails come from.")
+    elif not env("IMY_SMTP_PASSWORD"):
+        warn(f"Email: {env('IMY_SMTP_HOST')} with no IMY_SMTP_PASSWORD",
+             "Most services need one. Test it: python -m backend.mailer you@example.com")
+    else:
+        ok(f"Email: {env('IMY_SMTP_HOST')} as {mailer.sender()}",
+           "Proven only by a real test: python -m backend.mailer you@example.com")
 
 
 # ---------------------------------------------------------------- data, backups, disk
@@ -256,6 +284,24 @@ def check_live(url: str, require_https: bool = True) -> None:
     st, _, _ = _get(url + "/uploads/1/anything.png")
     (ok if st in (401, 404) else fail)(f"Signed-out request for an uploaded file answered {st}",
                                        "" if st in (401, 404) else "Uploaded files must need an account.")
+    # Asks for a reset link for an address that can't have an account (.invalid never exists), so
+    # nobody is emailed. 200 means the live site is able to send them; 503 means email isn't set up.
+    try:
+        req = urllib.request.Request(url + "/api/auth/forgot", data=b'{"email":"preflight@imy.invalid"}',
+                                     headers={"Content-Type": "application/json", "User-Agent": "imy-preflight"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            st = r.status
+    except urllib.error.HTTPError as e:
+        st = e.code
+    except (urllib.error.URLError, OSError):
+        st = 0
+    if st == 200:
+        ok("Live 'forgot password' is able to send email")
+    elif st == 503:
+        fail("Live 'forgot password' says email isn't set up",
+             "Set IMY_SMTP_HOST (and the rest) plus IMY_PUBLIC_URL on the server, then restart imy.")
+    elif st != 429:
+        warn(f"Live 'forgot password' answered {st}", "Deploy the latest version.")
     st, _, body = _get(url + "/api/status")
     try:
         ai = json.loads(body).get("ai", {})
