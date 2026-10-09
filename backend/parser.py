@@ -252,35 +252,100 @@ def bubble_side(r, width: int) -> str:
 MIN_BUBBLE_CONF = 75   # clearly readable bubbles score 85-97 in testing; half-covered ones ~65
 
 
+QUOTE_LABEL_RE = re.compile(r"replied to|replying to|you replied|original message|in reply to", re.I)
+
+
+def _inside(l, r) -> bool:
+    return r.x0 <= (l.left + l.right) / 2 <= r.x1 and r.y0 <= (l.top + l.bottom) / 2 <= r.y1
+
+
+def _quoted(screen) -> set[int]:
+    """Bubbles that are QUOTES of an older message ("You replied to Lawrence" + a faded copy of
+    what was replied to). The copy isn't a new message, and it sits on the wrong side, so skip it."""
+    W, _ = screen.size
+    out = set()
+    labels = [l for l in screen.lines if QUOTE_LABEL_RE.search(l.text) and not any(_inside(l, r) for r in screen.bubbles)]
+    for l in labels:
+        below = [(r.y0 - l.bottom, i) for i, r in enumerate(screen.bubbles) if -0.5 * l.height <= r.y0 - l.bottom <= 2.5 * l.height]
+        if below:
+            out.add(min(below)[1])
+    return out
+
+
+def _sender_names(screen, sides: list[str]) -> dict[int, str]:
+    """Group chats: a small name sits right above the first bubble of each person's run of messages.
+    Returns {bubble index: name} for the other people's bubbles that have one."""
+    W, _ = screen.size
+    names = {}
+    for i, (r, side) in enumerate(zip(screen.bubbles, sides)):
+        if side != "person":
+            continue
+        for l in screen.lines:
+            gap = r.y0 - l.bottom
+            text = l.text.strip()
+            if not (-2 <= gap <= 1.6 * l.height) or any(_inside(l, b) for b in screen.bubbles):
+                continue
+            if abs(l.left - r.x0) > 0.08 * W or l.right > W * 0.75 or is_chrome(text) or QUOTE_LABEL_RE.search(text):
+                continue
+            if 1 <= len(text.split()) <= 4 and len(re.sub(r"[^A-Za-zÀ-ɏ]", "", text)) >= 2:
+                names[i] = clean_text(text)
+                break
+    return names
+
+
 def parse_screen(screen, person_names: list[str]) -> dict:
     """Read a screenshot from ocr.read_screen(): one message per bubble, app chrome left out.
-    Falls back to the line-by-line parser when the bubbles can't be told apart from the background
-    (some light themes) or the app has no bubbles (Discord-style)."""
+    Also recognises the app (looks.py), skips quoted replies, and in group chats keeps only the
+    person's messages (and yours). Falls back to the line-by-line parser when the bubbles can't be
+    told apart from the background (some light themes) or the app has no bubbles (Discord-style)."""
+    from . import looks
     width, height = screen.size
     raw_text = "\n".join(l.text for l in screen.lines)
-    platform = detect_platform(raw_text)
     in_area = [l for l in screen.lines if screen.top <= (l.top + l.bottom) / 2 <= screen.bottom and not is_chrome(l.text)]
-    inside = lambda l: any(r.x0 <= (l.left + l.right) / 2 <= r.x1 and r.y0 <= (l.top + l.bottom) / 2 <= r.y1
-                           for r in screen.bubbles)
+    inside = lambda l: any(_inside(l, r) for r in screen.bubbles)
     covered = sum(map(inside, in_area)) / max(len(in_area), 1)
+    sides = [bubble_side(r, width) for r in screen.bubbles]
+    meta = looks.analyze(screen, sides, raw_text)
+    platform = meta["platform"]
 
     if len(screen.bubbles) >= 2 and covered >= 0.5 and not looks_like_header_layout(in_area):
+        quoted = _quoted(screen)
+        senders = _sender_names(screen, sides)
+        group = len(set(senders.values())) >= 2
+        meta["group"] = group
+        if group:
+            meta["senders"] = sorted(set(senders.values()))
+        needs_review = False
+        current = None   # in a group chat: whose run of messages we are in
         messages = []
-        for r in screen.bubbles:
-            if r.cut:                       # runs off the top/bottom: only part of it is visible (and the
-                continue                    # rest is usually in the next screenshot anyway)
+        for i, (r, side) in enumerate(zip(screen.bubbles, sides)):
+            if side == "person" and i in senders:
+                current = senders[i]
+            elif side == "user":
+                current = None
+            if r.cut or i in quoted:        # half off-screen (it's in the next screenshot) / a quote of an old message
+                continue
             if np.mean([l.conf for l in r.lines]) < MIN_BUBBLE_CONF:
                 continue                    # covered by a button, sticker or photo: the text came out garbled
             text = clean_text(r.text)
-            if text and not is_chrome(text) and re.search(r"[^\W\d_]|\d{4,}", text):
-                messages.append({"speaker": bubble_side(r, width), "text": text})
+            if not text or is_chrome(text) or not re.search(r"[^\W\d_]|\d{4,}", text):
+                continue
+            if group and side == "person" and current and not _name_matches(current, person_names):
+                continue                    # someone else in the group chat
+            messages.append({"speaker": side, "text": text})
+        if group and not any(_name_matches(n, person_names) for n in meta["senders"]):
+            needs_review = True             # a group chat, and none of the names is the person: check it
         messages = [m for i, m in enumerate(messages) if not (i < 2 and is_contact_header(m["text"], person_names))]
-        return {"platform": platform, "messages": messages, "raw_text": raw_text, "needs_review": False}
+        return {"platform": platform, "messages": messages, "raw_text": raw_text, "needs_review": needs_review,
+                "meta": meta}
 
     # Fallback: the line-by-line reader, limited to the chat area.
     res = parse_screenshot(in_area, screen.size, screen.rgb, person_names)
     res["raw_text"] = raw_text
-    res["platform"] = platform if res["platform"] in ("unknown", "discord") and platform != "unknown" else res["platform"]
+    if platform == "unknown" and res["platform"] not in ("unknown",):
+        meta["platform"] = res["platform"]
+    res["platform"] = meta["platform"]
+    res["meta"] = meta
     return res
 
 

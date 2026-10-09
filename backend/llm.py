@@ -1,79 +1,137 @@
-"""llm.py - optional free AI mode for chat replies (Google Gemini or Groq).
+"""llm.py - the free AI "brain" that helps when imy's own training data isn't enough.
 
-Put ONE of these in a `.env` file in the project root (or in your shell) and restart:
+How replies are made (see engine.generate_reply):
+  1. What YOU taught imy (interview answers, 👍 and Fix in the chat) is used first, word for word.
+  2. Simple things (hi, haha, goodnight...) are answered from their style without any AI.
+  3. Everything else, if an AI key is set: the AI writes the reply AS THEM - their words, length,
+     Taglish, endearments - using the style imy measured and their real messages as examples.
+     It can also actually answer questions ("ano magandang gawin pag di makatulog?") like a smart
+     friend would, still in their voice.
+  4. No key, or the free limit is reached: imy's own pattern-based reply. Nothing breaks.
 
-    GEMINI_API_KEY=...     free key from https://aistudio.google.com/apikey
-    GROQ_API_KEY=...       free key from https://console.groq.com/keys
+Put a key in the `.env` file in the project folder (see .env.example), then restart:
 
-With a key, the AI writes each reply: it reads your message and the recent conversation,
-and answers in the person's style (interview answers + measured style + parsed chats).
-Without a key nothing here runs. With one, that text is sent to the provider you chose.
-Screenshots are still read locally by Tesseract in this mode.
+    GROQ_API_KEY=...      free: https://console.groq.com/keys          <- recommended
+    GEMINI_API_KEY=...    https://aistudio.google.com/apikey
 
-Free model line-ups change every few months, so the model isn't hard-coded: we ask the
-provider what's available and pick a good one (IMY_LLM_MODEL overrides the choice).
+Why Groq first: it's free, very fast (replies in about a second), and by default doesn't keep what you
+send. Google's FREE Gemini tier says not to send personal information and may let people read what's
+sent, so only use Gemini for real users' chats with billing turned on (then set IMY_GEMINI_PAID=1).
+When both keys are set, imy uses Groq and switches to Gemini whenever Groq's free limit is reached.
+
+Settings (optional, in .env):
+    IMY_AI_MODE=fallback   fallback (default): AI only when the trained data isn't enough
+                           always: AI for everything except what you taught it;  off: never
+    IMY_AI_ORDER=groq,gemini
+    IMY_LLM_MODEL=...      force one model id
 """
 import json
 import os
 import re
+import threading
+import time
 import urllib.error
 import urllib.request
 
 from . import claude  # noqa: F401  (importing it loads the .env file)
 
-TIMEOUT = 60
-_working: dict[str, str] = {}   # provider -> the model that last answered
+TIMEOUT = float(os.environ.get("IMY_AI_TIMEOUT", "15"))   # seconds per request: a stuck call never freezes a chat
+MAX_ATTEMPTS = 4                                         # different models tried before giving up on one reply
+MODEL_LIST_TTL = 6 * 3600
+_lock = threading.Lock()
+_models: dict[str, tuple[float, list[str]]] = {}         # provider -> (fetched at, ranked model ids)
+_cooldown: dict[tuple[str, str], float] = {}             # (provider, model) -> don't use until this time
+_working: dict[str, str] = {}                            # provider -> the model that last answered
+_last: dict[str, str] = {}                               # what was used last, for the status page
+_plain: set[str] = set()                                 # models that reject the "think less" setting
 
 
 class LLMError(RuntimeError):
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None, retry_after: float | None = None):
         super().__init__(message)
         self.status = status
+        self.retry_after = retry_after
 
 
-def provider() -> str | None:
-    if os.environ.get("IMY_LLM", "1") == "0":
-        return None
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return "gemini"
-    if os.environ.get("GROQ_API_KEY"):
-        return "groq"
+# ------------------------------------------------------------------ which providers are on
+def _key(provider: str) -> str | None:
+    if provider == "groq":
+        return os.environ.get("GROQ_API_KEY")
+    if provider == "gemini":
+        return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     return None
 
 
+def mode() -> str:
+    if os.environ.get("IMY_LLM", "1") == "0":
+        return "off"
+    m = os.environ.get("IMY_AI_MODE", "fallback").lower()
+    return m if m in ("fallback", "always", "off") else "fallback"
+
+
+def providers() -> list[str]:
+    if mode() == "off":
+        return []
+    order = [p.strip() for p in os.environ.get("IMY_AI_ORDER", "groq,gemini").split(",") if p.strip()]
+    return [p for p in order if p in ("groq", "gemini") and _key(p)]
+
+
+def provider() -> str | None:
+    ps = providers()
+    return ps[0] if ps else None
+
+
 def enabled() -> bool:
-    return provider() is not None
+    return bool(providers())
 
 
 def label() -> str:
-    p = provider()
-    return f"{'Gemini' if p == 'gemini' else 'Groq'} ({_working.get(p, 'AI model')})"
+    p = _last.get("provider") or provider()
+    if not p:
+        return "AI"
+    return f"{'Gemini' if p == 'gemini' else 'Groq'} ({_last.get('model') or _working.get(p) or 'AI model'})"
+
+
+def status() -> dict:
+    """For /api/status: which brain is on (never the keys themselves)."""
+    gem_free = "gemini" in providers() and os.environ.get("IMY_GEMINI_PAID") != "1"
+    return {"mode": mode(), "providers": providers(), "last": dict(_last),
+            "warning": "Gemini's free tier isn't meant for personal chats; use it only with billing on."
+            if gem_free else ""}
 
 
 def explain(exc: Exception) -> str:
     """One short, user-facing reason a call failed."""
-    status = getattr(exc, "status", None)
-    if status in (401, 403) or (status == 400 and "api key" in str(exc).lower()):
+    st = getattr(exc, "status", None)
+    if st in (401, 403) or (st == 400 and "api key" in str(exc).lower()):
         return "the API key was rejected"
-    if status == 429:
-        return "the free limit was reached, try again in a minute"
-    if status:
-        return f"the AI provider returned an error ({status})"
-    if isinstance(exc, (urllib.error.URLError, TimeoutError)):
-        return "couldn't reach the AI provider (no internet?)"
+    if st == 429:
+        return "the free limit was reached for now"
+    if st:
+        return f"the AI service returned an error ({st})"
+    if isinstance(exc, (urllib.error.URLError, TimeoutError)) or str(exc).startswith("network"):
+        return "couldn't reach the AI service"
     return str(exc) or exc.__class__.__name__
 
 
+# ------------------------------------------------------------------ HTTP
 def _http(url: str, headers: dict, body: dict | None = None) -> dict:
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Content-Type": "application/json", **headers},
+                                 headers={"Content-Type": "application/json", "User-Agent": "imy/1.0", **headers},
                                  method="POST" if body is not None else "GET")
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as err:
-        detail = err.read().decode("utf-8", "replace")[:300]
-        raise LLMError(f"{err.code}: {detail}", err.code) from None
+        detail = err.read().decode("utf-8", "replace")[:400]
+        retry = err.headers.get("retry-after") if err.headers else None
+        try:
+            retry_s = float(retry) if retry else None
+        except ValueError:
+            retry_s = None
+        raise LLMError(f"{err.code}: {detail}", err.code, retry_s) from None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as err:
+        raise LLMError(f"network: {err}") from None
 
 
 def _version(name: str) -> float:
@@ -81,25 +139,66 @@ def _version(name: str) -> float:
     return float(m.group(1)) if m else 0.0
 
 
+# ------------------------------------------------------------------ Groq (OpenAI-compatible)
+GROQ = os.environ.get("IMY_GROQ_URL", "https://api.groq.com/openai/v1")   # any OpenAI-compatible server works
+# Free-plan chat models, best for this job first. Newer models Groq adds are still tried after these.
+GROQ_PREFER = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "qwen/qwen3",
+               "moonshotai/kimi", "meta-llama/llama-4", "llama-3.1-8b-instant"]
+GROQ_FALLBACK = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+GROQ_SKIP = ("whisper", "guard", "tts", "playai", "compound", "safeguard", "orpheus", "distil")
+
+
+def _groq_models() -> list[str]:
+    try:
+        data = _http(f"{GROQ}/models", {"Authorization": f"Bearer {_key('groq')}"})
+        names = [m["id"] for m in data.get("data", []) if m.get("active", True)
+                 and not any(s in m["id"].lower() for s in GROQ_SKIP)]
+    except LLMError as exc:
+        if exc.status in (401, 403):
+            raise
+        names = []
+    names = names or GROQ_FALLBACK
+
+    def rank(n: str):
+        low = n.lower()
+        return next((i for i, p in enumerate(GROQ_PREFER) if low.startswith(p)), len(GROQ_PREFER)), n
+    return sorted(dict.fromkeys(names), key=rank)
+
+
+def _groq_chat(model: str, system: str, turns: list[dict]) -> str:
+    body = {"model": model, "temperature": 0.85, "max_completion_tokens": 700,
+            "messages": [{"role": "system", "content": system}, *turns]}
+    extra = {"reasoning_effort": "low"} if "gpt-oss" in model else {"reasoning_effort": "none"} if "qwen3" in model else {}
+    if model in _plain:
+        extra = {}
+    headers = {"Authorization": f"Bearer {_key('groq')}"}
+    try:
+        data = _http(f"{GROQ}/chat/completions", headers, {**body, **extra})
+    except LLMError as exc:
+        if exc.status == 400 and extra:          # this model doesn't take the reasoning setting: ask plainly (and remember)
+            data = _http(f"{GROQ}/chat/completions", headers, body)
+            _plain.add(model)
+        else:
+            raise
+    text = data["choices"][0]["message"].get("content") or ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+
+
 # ------------------------------------------------------------------ Gemini
 GEMINI = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_SKIP = ("image", "tts", "audio", "live", "embedding", "vision", "computer", "robotics", "aqa")
-
-
-def _gemini_key() -> str:
-    return os.environ.get("GEMINI_API_KEY") or os.environ["GOOGLE_API_KEY"]
+GEMINI_SKIP = ("image", "tts", "audio", "live", "embedding", "vision", "computer", "robotics", "aqa", "transcribe",
+               "translate", "omni", "nano")
 
 
 def _gemini_models() -> list[str]:
-    """Text models this key can use, best first: newest Flash, then Flash-Lite, then the rest."""
-    data = _http(f"{GEMINI}/models?pageSize=200", {"x-goog-api-key": _gemini_key()})
+    data = _http(f"{GEMINI}/models?pageSize=200", {"x-goog-api-key": _key("gemini")})
     names = [m["name"].removeprefix("models/") for m in data.get("models", [])
              if "generateContent" in m.get("supportedGenerationMethods", [])]
     names = [n for n in names if n.startswith("gemini") and not any(s in n for s in GEMINI_SKIP)]
 
-    def rank(n: str):
-        tier = 0 if "flash" in n and "lite" not in n else 1 if "flash" in n else 2   # Pro is rarely on the free tier
-        return (tier, -_version(n), "preview" in n or "exp" in n, len(n))
+    def rank(n: str):   # newest stable Flash first (fast, free), then Flash-Lite, then the rest
+        tier = 0 if "flash" in n and "lite" not in n else 1 if "flash" in n else 2
+        return (tier, "preview" in n or "exp" in n, -_version(n), len(n))
     return sorted(names, key=rank)
 
 
@@ -107,54 +206,113 @@ def _gemini_chat(model: str, system: str, turns: list[dict]) -> str:
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user" if t["role"] == "user" else "model", "parts": [{"text": t["content"]}]} for t in turns],
-        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000},
+        "generationConfig": {"temperature": 0.85, "maxOutputTokens": 800},
     }
-    data = _http(f"{GEMINI}/models/{model}:generateContent", {"x-goog-api-key": _gemini_key()}, body)
+    # Chat replies don't need long "thinking"; keep it minimal so answers come back fast.
+    thinking = {"thinkingBudget": 0} if model.startswith("gemini-2.5") else {"thinkingLevel": "low"}
+    url = f"{GEMINI}/models/{model}:generateContent"
+    headers = {"x-goog-api-key": _key("gemini")}
+    try:
+        if model in _plain:
+            raise LLMError("plain", 400)
+        data = _http(url, headers, {**body, "generationConfig": {**body["generationConfig"], "thinkingConfig": thinking}})
+    except LLMError as exc:
+        if exc.status == 400:                    # this model doesn't take that thinking setting
+            data = _http(url, headers, body)
+            _plain.add(model)
+        else:
+            raise
     parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
     return "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
 
 
-# ------------------------------------------------------------------ Groq (OpenAI-compatible)
-GROQ = "https://api.groq.com/openai/v1"
-GROQ_PREFER = ("llama-3.3-70b", "gpt-oss-120b", "70b", "kimi", "qwen", "gpt-oss", "llama")
-GROQ_SKIP = ("whisper", "guard", "tts", "playai", "compound", "safeguard")
+CALLS = {"groq": (_groq_models, _groq_chat), "gemini": (_gemini_models, _gemini_chat)}
 
 
-def _groq_models() -> list[str]:
-    data = _http(f"{GROQ}/models", {"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"})
-    names = [m["id"] for m in data.get("data", []) if not any(s in m["id"].lower() for s in GROQ_SKIP)]
-    return sorted(names, key=lambda n: next((i for i, p in enumerate(GROQ_PREFER) if p in n.lower()), len(GROQ_PREFER)))
+def _ranked(p: str) -> list[str]:
+    with _lock:
+        cached = _models.get(p)
+    if cached and time.time() - cached[0] < MODEL_LIST_TTL:
+        return cached[1]
+    names = CALLS[p][0]()
+    with _lock:
+        _models[p] = (time.time(), names)
+    return names
 
 
-def _groq_chat(model: str, system: str, turns: list[dict]) -> str:
-    body = {"model": model, "temperature": 0.9, "max_tokens": 400,
-            "messages": [{"role": "system", "content": system}, *turns]}
-    data = _http(f"{GROQ}/chat/completions", {"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"}, body)
-    text = data["choices"][0]["message"].get("content") or ""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()   # some models show their reasoning
+def _candidates() -> list[tuple[str, str]]:
+    """(provider, model) pairs to try, best first, skipping models resting after a limit was hit."""
+    now = time.time()
+    forced = os.environ.get("IMY_LLM_MODEL")
+    out = []
+    for p in providers():
+        try:
+            names = [forced] if forced else _ranked(p)
+        except LLMError as exc:
+            print(f"[imy] {p}: {explain(exc)}")
+            continue
+        if p in _working and _working[p] in names:          # the one that worked last time goes first
+            names = [_working[p]] + [n for n in names if n != _working[p]]
+        out += [(p, n) for n in names[:5] if _cooldown.get((p, n), 0) <= now]
+    return out
+
+
+def _cool(p: str, model: str, exc: LLMError) -> None:
+    """Rest a model for a while after it failed (a free limit, a removed model, a bad key)."""
+    if exc.status in (401, 403):
+        wait = 600
+    else:
+        wait = exc.retry_after or (60 if exc.status == 429 else 300 if exc.status in (404, 413) else 20)
+    _cooldown[(p, model)] = time.time() + min(wait, 3600)
+    if _working.get(p) == model:
+        _working.pop(p, None)
 
 
 # ------------------------------------------------------------------ public
-def chat(system: str, history: list[dict], user_text: str, max_bubbles: int) -> list[str]:
-    """history: [{"role": "user"|"person", "text": ...}] oldest first. Returns the reply bubbles."""
-    p = provider()
-    list_models, call = (_gemini_models, _gemini_chat) if p == "gemini" else (_groq_models, _groq_chat)
-    turns = claude.build_turns(history, user_text)
-    forced = os.environ.get("IMY_LLM_MODEL")
-    candidates = [forced] if forced else ([_working[p]] if p in _working else list_models()[:5])
-    last: Exception = LLMError("no usable model found for this key")
-    for model in candidates:
+def chat(system: str, history: list[dict], user_text: str, max_bubbles: int, name: str = "") -> list[str]:
+    """history: [{"role": "user"|"person", "text": ...}] oldest first. Returns the reply bubbles.
+    Tries the best available free model; on a limit or error moves to the next one (and to Gemini
+    when Groq is used up). Raises LLMError if none answered."""
+    turns = claude.build_turns(history[-14:], user_text)
+    last: Exception = LLMError("no AI model is available right now")
+    started = time.time()
+    for attempt, (p, model) in enumerate(_candidates()):
+        if attempt >= MAX_ATTEMPTS or time.time() - started > 2 * TIMEOUT:
+            break
         try:
-            text = call(model, system, turns)
+            text = CALLS[p][1](model, system, turns)
         except LLMError as exc:
             last = exc
-            if exc.status in (401, 403):      # bad key: no point trying other models
-                break
-            _working.pop(p, None)             # not found / over quota / unsupported: try the next one
+            print(f"[imy] {p}/{model}: {explain(exc)}")
+            _cool(p, model, exc)
+            if exc.status in (401, 403):         # a bad key: don't try this provider's other models now
+                for q, m in list(_candidates()):
+                    if q == p:
+                        _cooldown[(q, m)] = time.time() + 600
             continue
-        bubbles = [l.strip() for l in text.splitlines() if l.strip()][:max_bubbles]
+        except (KeyError, IndexError, TypeError) as exc:   # an unexpected answer shape
+            last = LLMError(f"odd response: {exc}")
+            _cool(p, model, LLMError("odd", 500))
+            continue
+        bubbles = [b for b in (clean_line(l, name) for l in text.splitlines()) if b][:max_bubbles]
         if bubbles:
             _working[p] = model
+            _last.update(provider=p, model=model, at=time.strftime("%H:%M:%S"))
             return bubbles
         last = LLMError("empty response")
     raise last
+
+
+def clean_line(line: str, name: str = "") -> str:
+    """Models sometimes add "Name:", quotes or list markers; a text message has none of those."""
+    t = line.strip()
+    if not t or (t.startswith(("(", "[", "*")) and t.endswith((")", "]", "*"))):   # stage directions: "(laughs)"
+        return ""
+    t = re.sub(r"^\s*(?:[-•]\s+|\d+[.)]\s+)", "", t)
+    for n in {name, (name.split() or [""])[0]} - {""}:
+        if t.lower().startswith(n.lower() + ":"):
+            t = t[len(n) + 1:]
+    t = t.strip()
+    if len(t) >= 2 and t[0] in "\"“" and t[-1] in "\"”":
+        t = t[1:-1]
+    return t.strip()

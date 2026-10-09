@@ -1,32 +1,30 @@
-"""engine.py - the "brain". Picks a reply in the person's own words.
+"""engine.py - the "brain". Decides what the person would say next.
 
-How a reply is produced (no external API needed):
+How a reply is produced:
 
-  1. EMBED     Turn the incoming message into a vector (sentence-transformers,
-               or TF-IDF if that isn't installed).
-  2. RETRIEVE  Compare it with every "thing you said" in the screenshots. Each
-               one was followed by a real reply from the person; we find the
-               closest matches and reuse that real reply.
-  3. INTENTS   Greetings, "miss you", "goodnight" etc. are recognised by rules and
-               answered from the person's own matching messages (or a small
-               template shaped by their style) when retrieval isn't confident.
-  4. FALLBACK  If nothing matches: after a plain remark, one of their short all-purpose
-               replies ("hahaha", "true", "oo"); otherwise personality.py composes a
-               fitting reply from their interview answers (Q6-Q10) and writing style.
-  5. OPTIONAL  If "Use local LLM" is on and Ollama is running, a local model
-               writes the reply instead, using retrieved examples + interview
-               answers + the style summary as guidance.
-  6. OPTIONAL  If ANTHROPIC_API_KEY is set, Claude writes the reply instead of
-               all of the above (see claude.py); steps 1-4 are the fallback.
+  1. TAUGHT    What you told imy directly - "how would they reply?" answers in the interview,
+               and 👍 / Fix in the chat - is used first, word for word, when your message matches.
+  2. LOCAL     smalltalk.py / personality.py write a reply for what you said, in their style
+               (casing, Taglish, endearments, emojis measured from their real messages).
+  3. AI        If a free AI key is set (llm.py: Groq, or Gemini) and step 2 isn't confident - anything
+               beyond hi / haha / goodnight - the AI writes the reply AS THEM, using their style and
+               real messages as examples. It can also really answer questions, in their voice.
+               IMY_AI_MODE=always uses the AI for everything except what you taught.
+  4. FALLBACK  No key, no internet or the free limit reached: step 2's reply. Nothing breaks.
 
-Tweak the numbers in THRESHOLDS / TEMPLATES below to change behaviour.
+  Optional: Ollama (a local model, "Use a local model" in the chat menu) or Claude (ANTHROPIC_API_KEY).
+
+Matching uses sentence-transformers when installed (loaded in the background, so the first message
+isn't slow) and TF-IDF on letter patterns otherwise.
 """
 import hashlib
 import json
 import os
 import random
 import re
+import threading
 import urllib.request
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -129,19 +127,47 @@ class VectorSpace:
     _model = None
     _failed = False
 
+    _loading = False
+    _lock = threading.Lock()
+
+    @classmethod
+    def _load(cls):
+        try:
+            from sentence_transformers import SentenceTransformer
+            cls._model = SentenceTransformer(os.environ.get("IMY_MODEL", "all-MiniLM-L6-v2"))
+            print("[imy] sentence-transformers ready.")
+        except Exception as exc:  # not installed, or the model can't be downloaded offline
+            print(f"[imy] sentence-transformers unavailable ({exc.__class__.__name__}); using TF-IDF.")
+            cls._failed = True
+        finally:
+            cls._loading = False
+
+    @classmethod
+    def warm_up(cls, wait: bool = False):
+        """Start loading the sentence model in the background (called when the server starts).
+        Until it's ready, replies use TF-IDF, so nobody waits for a 90 MB model to load."""
+        if os.environ.get("IMY_EMBEDDER", "").lower() == "tfidf" or cls._failed or cls._model is not None:
+            return
+        with cls._lock:
+            if cls._loading:
+                return
+            cls._loading = True
+        if wait:
+            cls._load()
+        else:
+            threading.Thread(target=cls._load, name="imy-embedder", daemon=True).start()
+
     @classmethod
     def sentence_model(cls):
         if os.environ.get("IMY_EMBEDDER", "").lower() == "tfidf" or cls._failed:
             return None
         if cls._model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                cls._model = SentenceTransformer(os.environ.get("IMY_MODEL", "all-MiniLM-L6-v2"))
-            except Exception as exc:  # not installed, or model can't be downloaded offline
-                print(f"[imy] sentence-transformers unavailable ({exc}); using TF-IDF instead.")
-                cls._failed = True
-                return None
+            cls.warm_up()
         return cls._model
+
+    @classmethod
+    def kind_now(cls) -> str:
+        return "sentence-transformers" if cls.sentence_model() is not None else "tfidf"
 
     def __init__(self, corpus: list[str]):
         self.model = self.sentence_model()
@@ -173,6 +199,7 @@ class Reply:
     intent: str | None = None
     note: str | None = None
     embedder: str = ""
+    rule: str | None = None     # which smalltalk rule answered (local replies)
 
     def debug(self) -> dict:
         return {k: v for k, v in self.__dict__.items() if k != "bubbles" and v not in (None, "")}
@@ -307,7 +334,8 @@ class PersonIndex:
             if found:
                 text, why = found
                 text = style_mod.apply_style(text.replace("{e}", self._endearment(rng)), self.style, rng)
-                return Reply([text], "smalltalk", 0.0, None, intent, note=f"Written for what you said ({why}), in their style.", embedder=kind)
+                return Reply([text], "smalltalk", 0.0, None, intent, note=f"Written for what you said ({why}), in their style.",
+                             embedder=kind, rule=smalltalk.rule_of(user_text) or "ack")
             text, why = personality.compose(user_text, self.style, self.answers, rng, recent, act)
             return Reply([text], "personality", 0.0, None, None, note=f"Written from their personality and writing style: {why}.", embedder=kind)
 
@@ -391,6 +419,80 @@ class PersonIndex:
             raise RuntimeError("empty response")
         return Reply(bubbles, "llm", 0.0, None, detect_intent(user_text), note=f"Written by local model {model}.", embedder=self.space.kind)
 
+    # ---- the free AI brain (llm.py)
+    def _examples(self, user_text: str, history: list[dict], k: int = 6) -> list[tuple[str, list[str]]]:
+        if self.prompt_vecs is None:
+            return []
+        sims = self.space.similarity(self.prompt_vecs, self._query(user_text, history))
+        out, seen = [], set()
+        for i in np.argsort(-sims)[:k * 4]:
+            key = (self.prompts[i].lower(), " ".join(self.replies[i]).lower())
+            if sims[i] > 0.05 and key not in seen:
+                seen.add(key)
+                out.append((self.prompts[i], self.replies[i]))
+            if len(out) >= k:
+                break
+        return out
+
+    def _samples(self, n: int = 28) -> list[str]:
+        """A spread of their real messages (not OCR scraps), to show the AI how they sound."""
+        seen, good = set(), []
+        for t in self.person_texts:
+            key = re.sub(r"\W+", "", t.lower())
+            if key in seen or not re.search(r"[^\W\d_]{2,}", t) or len(t) > 220:
+                continue
+            seen.add(key)
+            good.append(t)
+        if len(good) <= n:
+            return good
+        step = len(good) / n
+        return [good[int(i * step)] for i in range(n)]
+
+    def ai_prompt(self, user_text: str, history: list[dict]) -> str:
+        labels = _question_labels()
+        name = self.name
+        nick = (self.answers.get("q2") or "").strip()
+        facts = "\n".join(f"- {labels[k]} {v.strip()}" for k, v in self.answers.items()
+                          if v and v.strip() and k in labels and k not in ("q1",))[:1800]
+        style = "\n".join("- " + s for s in style_mod.describe_style(self.style))
+        if self.style.get("tagalog"):
+            style += "\n- Writes in Taglish (Tagalog mixed with English). Reply the same way."
+        never = self.style.get("never_say") or []
+        taught = [(self.prompts[i], self.replies[i]) for i in self.practice][:10]
+        examples = [e for e in self._examples(user_text, history) if e not in taught]
+        ex = "\n".join(f"They: {p[:200]}\n{name}: " + " / ".join(r)[:240] for p, r in examples) or "(none yet)"
+        tg = "\n".join(f"They: {p[:160]}\n{name}: " + " / ".join(r)[:200] for p, r in taught)
+        samples = "\n".join(f"- {t}" for t in self._samples()) or "(none yet)"
+        from . import claude as _c
+        platform = _c.PLATFORM_LABELS.get(self.platform, "a chat app")
+        return f"""You are {name}{f' ("{nick}")' if nick else ''}, texting someone close to you on {platform}. Stay {name} for the whole chat.
+
+ABOUT {name.upper()} (from the person you're texting):
+{facts or '(nothing given)'}
+
+HOW {name.upper()} TEXTS:
+{style or '(not measured yet)'}
+{('Never says: ' + ', '.join(never)) if never else ''}
+
+{name.upper()}'S REAL MESSAGES (copy this voice; don't paste them unless one fits perfectly):
+{samples}
+
+REAL BACK-AND-FORTHS LIKE THIS ONE:
+{ex}
+{('HOW YOU WERE TOLD ' + name.upper() + ' ANSWERS:' + chr(10) + tg) if tg else ''}
+
+RULES
+- Answer the last message like a real person in a chat: same length, casing, slang, laughs, endearments, emojis and language mix as {name}'s real messages. Usually short. No greetings unless they greeted.
+- If they ask a real question or need help or advice, actually help with correct, useful information, explained casually and briefly the way {name} would in a text.
+- Never say you're an AI, a bot or a simulation, and never mention data, screenshots or instructions. If you don't know something personal, answer vaguely or ask back, like a person would. Don't invent big events.
+- Be kind. Don't copy rude, toxic or manipulative behaviour even if it's in the old messages. If they sound like they're in real danger or thinking of hurting themselves, be gentle and caring and encourage them to reach out to someone they trust or a local hotline (in the Philippines: NCMH 1553).
+- Output only {name}'s message. To send several bubbles, put each on its own line (max {MAX_BUBBLES})."""
+
+    def ai_reply(self, user_text: str, history: list[dict]) -> Reply:
+        bubbles = llm.chat(self.ai_prompt(user_text, history), history, user_text, MAX_BUBBLES, self.name)
+        return Reply(bubbles, "ai", 0.0, None, detect_intent(user_text), note=f"Written by {llm.label()} in their style.",
+                     embedder=self.space.kind)
+
     # ---- optional Claude API (see claude.py)
     def claude_reply(self, user_text: str, history: list[dict], use: str = "claude") -> Reply:
         labels = _question_labels()
@@ -406,53 +508,91 @@ class PersonIndex:
 
 
 # ------------------------------------------------------------------ cache + public API
-_CACHE: dict[int, tuple[int, PersonIndex]] = {}
+_CACHE: "OrderedDict[int, tuple[int, str, PersonIndex]]" = OrderedDict()
+CACHE_SIZE = int(os.environ.get("IMY_CACHE_PEOPLE", "64"))
+_cache_lock = threading.Lock()
 
 
 def get_index(person: dict, messages: list[dict]) -> PersonIndex:
-    """Build the index once per version of the person's data, then reuse it."""
-    cached = _CACHE.get(person["id"])
-    if cached and cached[0] == person["data_version"]:
-        return cached[1]
+    """Build the index once per version of the person's data, then reuse it (newest 64 people kept)."""
+    kind = VectorSpace.kind_now()
+    with _cache_lock:
+        cached = _CACHE.get(person["id"])
+        if cached and cached[0] == person["data_version"] and cached[1] == kind:
+            _CACHE.move_to_end(person["id"])
+            return cached[2]
     index = PersonIndex(person, messages)
-    _CACHE[person["id"]] = (person["data_version"], index)
+    with _cache_lock:
+        _CACHE[person["id"]] = (person["data_version"], index.space.kind, index)
+        _CACHE.move_to_end(person["id"])
+        while len(_CACHE) > CACHE_SIZE:
+            _CACHE.popitem(last=False)
     return index
 
 
 def forget(person_id: int) -> None:
-    _CACHE.pop(person_id, None)
+    with _cache_lock:
+        _CACHE.pop(person_id, None)
+
+
+# Local replies that are good enough on their own: short, simple moments. Anything else goes to the AI
+# (when one is set up), because it needs real understanding of what was said.
+SIMPLE_RULES = {"greeting", "laugh", "thanks", "goodnight", "goodmorning", "bye", "yes", "no", "fine", "miss_you",
+                "love_you", "time", "day", "who"}
+
+
+def confident(reply: Reply, user_text: str) -> bool:
+    if reply.source == "practice":
+        return True
+    if llm.mode() == "always":
+        return False
+    if reply.source in ("retrieval", "intent") and REUSE_LINES:
+        return reply.score >= THRESHOLDS.get(reply.embedder, (0.6, 0.45))[0]
+    return reply.source == "smalltalk" and reply.rule in SIMPLE_RULES and len(user_text.split()) <= 6
+
+
+def _says_never(reply: Reply, never: list[str]) -> bool:
+    return any(p in b.lower() for p in never for b in reply.bubbles)
+
+
+def local_reply(index: PersonIndex, user_text: str, history: list[dict], seed: int) -> Reply:
+    rng = random.Random(seed)
+    never = index.style.get("never_say") or []
+    for attempt in range(4):   # try a few times to avoid anything they'd "never say"
+        reply = index.retrieval_reply(user_text, history, rng)
+        if not _says_never(reply, never):
+            break
+        rng = random.Random(seed + attempt + 1)
+    reply.bubbles = [b for b in (parser.clean_text(b) for b in reply.bubbles) if b] or reply.bubbles
+    return reply
 
 
 def generate_reply(person: dict, messages: list[dict], history: list[dict], user_text: str) -> Reply:
     index = get_index(person, messages)
     seed = int(hashlib.md5(f"{user_text}|{len(history)}".encode()).hexdigest(), 16) % (2 ** 32)
-    rng = random.Random(seed)
     note = None
     if claude.enabled():
         try:
             return index.claude_reply(user_text, history)
         except Exception as exc:
             print(f"[imy] Claude failed: {exc}")
-            note = f"Couldn't get a reply from Claude ({claude.explain(exc)}). Used pattern matching instead."
-    elif llm.enabled():
+            note = f"Couldn't get a reply from Claude ({claude.explain(exc)}). Used imy's own reply instead."
+    if person.get("use_llm"):
         try:
-            return index.claude_reply(user_text, history, use="llm")
-        except Exception as exc:
-            print(f"[imy] AI reply failed: {exc}")
-            note = f"Couldn't get a reply from the AI ({llm.explain(exc)}). Used pattern matching instead."
-    elif person.get("use_llm"):
-        try:
-            return index.llm_reply(user_text, history, rng)
+            return index.llm_reply(user_text, history, random.Random(seed))
         except Exception as exc:
             print(f"[imy] local LLM failed: {exc}")
-            note = "Couldn't get a reply from the local model (is Ollama running?). Used pattern matching instead."
-    never = index.style.get("never_say") or []
-    for attempt in range(4):   # try a few times to avoid anything they'd "never say"
-        reply = index.retrieval_reply(user_text, history, rng)
-        if not any(p in b.lower() for p in never for b in reply.bubbles):
-            break
-        rng = random.Random(seed + attempt + 1)
-    reply.bubbles = [b for b in (parser.clean_text(b) for b in reply.bubbles) if b] or reply.bubbles
+            note = "Couldn't get a reply from the local model (is Ollama running?). Used imy's own reply instead."
+
+    reply = local_reply(index, user_text, history, seed)
+    if note is None and llm.enabled() and not confident(reply, user_text):
+        try:
+            ai = index.ai_reply(user_text, history)
+            if not _says_never(ai, index.style.get("never_say") or []):
+                return ai
+        except Exception as exc:   # free limit, no internet, odd answer: imy's own reply is still fine
+            print(f"[imy] AI reply failed: {exc}")
+            note = f"The AI couldn't answer ({llm.explain(exc)}), so imy wrote this from their style."
     if note:
         reply.note = note
     return reply

@@ -1,42 +1,56 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { load, save } from "./storage";
 import Sidebar from "./components/Sidebar";
 import Trainer from "./components/Trainer";
 import Chat from "./components/Chat";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 /* App: owns the list of people and decides which screen to show.
      mode "chat"  -> Chat Mode with the selected person
-     mode "train" -> Training Mode (trainId = null means "creating someone new") */
+     mode "train" -> Training Mode (trainId = null means "creating someone new")
+   If the server can't be reached it keeps retrying quietly and shows "Reconnecting…" meanwhile. */
 export default function App() {
   const [persons, setPersons] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [mode, setMode] = useState("chat");
   const [trainId, setTrainId] = useState(null);
-  const [error, setError] = useState("");
+  const [offline, setOffline] = useState(false);
+  const retry = useRef(null);
   // Light or dark: remembered in this browser.
-  const [theme, setTheme] = useState(() => localStorage.getItem("imy.theme")
-    || "dark");   // dark is the brand look (same as the landing page)
+  const [theme, setTheme] = useState(() => load("imy.theme", "dark"));   // dark is the brand look (same as the landing page)
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("imy.theme", theme);
+    save("imy.theme", theme);
   }, [theme]);
 
   const refresh = useCallback(async () => {
+    clearTimeout(retry.current);
     try {
-      setPersons(await api.persons());
-    } catch (e) {
-      setError("Can't reach the imy backend. Is it running on port 8000?");
+      const list = await api.persons();
+      setPersons(Array.isArray(list) ? list : []);
+      setOffline(false);
+    } catch {
+      setOffline(true);
+      retry.current = setTimeout(refresh, 4000);   // try again by itself; no need to reload the page
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    const back = () => refresh();
+    window.addEventListener("online", back);
+    const quiet = (e) => console.warn("[imy] unhandled:", e.reason);   // a stray failed request must not break the page
+    window.addEventListener("unhandledrejection", quiet);
+    return () => { window.removeEventListener("online", back); window.removeEventListener("unhandledrejection", quiet); clearTimeout(retry.current); };
+  }, [refresh]);
 
   const active = persons.find((p) => p.id === activeId) || null;
 
   const startTraining = (id = null) => { setTrainId(id); setMode("train"); };
   const finishTraining = async (id) => { await refresh(); setActiveId(id); setMode("chat"); };
   const remove = async (id) => {
-    await api.deletePerson(id);
+    try { await api.deletePerson(id); } catch (e) { alert(e.message); return; }
     if (activeId === id) setActiveId(null);
     refresh();
   };
@@ -52,22 +66,25 @@ export default function App() {
         onTheme={setTheme}
       />
       <main className="main">
-        {error && <div className="banner error">{error}</div>}
-        {mode === "train" ? (
-          <Trainer
-            key={trainId ?? "new"}
-            personId={trainId}
-            theme={theme}
-            onTheme={setTheme}
-            onDone={finishTraining}
-            onSaved={refresh}
-            onCancel={() => { refresh(); setMode("chat"); }}
-          />
-        ) : active ? (
-          <Chat key={active.id} person={active} persons={persons} onChanged={refresh} onBack={() => setActiveId(null)} onEdit={() => startTraining(active.id)} onDelete={() => remove(active.id)} />
-        ) : (
-          <Welcome hasPeople={persons.length > 0} onNew={() => startTraining(null)} />
-        )}
+        {offline && <div className="banner warn" role="status">Can’t reach imy right now. Reconnecting…</div>}
+        <ErrorBoundary resetKey={`${mode}-${activeId}-${trainId}`}>
+          {mode === "train" ? (
+            <Trainer
+              key={trainId ?? "new"}
+              personId={trainId}
+              theme={theme}
+              onTheme={setTheme}
+              onDone={finishTraining}
+              onSaved={refresh}
+              onCancel={() => { refresh(); setMode("chat"); }}
+            />
+          ) : active ? (
+            <Chat key={active.id} person={active} persons={persons} theme={theme} onChanged={refresh}
+              onBack={() => setActiveId(null)} onEdit={() => startTraining(active.id)} onDelete={() => remove(active.id)} />
+          ) : (
+            <Welcome hasPeople={persons.length > 0} onNew={() => startTraining(null)} />
+          )}
+        </ErrorBoundary>
       </main>
     </div>
   );
@@ -80,10 +97,10 @@ function Welcome({ hasPeople, onNew }) {
       <p>
         {hasPeople
           ? "Pick a person from the list, or set up someone new."
-          : "Answer a few questions about them and upload screenshots of your chats. imy learns how they write and lets you talk with that style again."}
+          : "Answer a few questions about them and upload your chats. imy learns how they write and lets you talk with that style again."}
       </p>
       <button className="btn primary" onClick={onNew}>Create new person</button>
-      <p className="fine">imy copies writing patterns from the messages you give it. It isn’t them, and your chats and screenshots stay on this computer unless you turn on AI mode.</p>
+      <p className="fine">imy copies writing patterns from the messages you give it. It isn’t them. When an AI helps with a reply, only the text needed for that reply is sent to it.</p>
     </div>
   );
 }

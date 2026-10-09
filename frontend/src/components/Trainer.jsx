@@ -319,8 +319,12 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
       update({ status: "reading" });
       try {
         const [shot] = await api.upload(pid, [it.file]);
+        if (!shot || shot.error) throw new Error(shot?.error || "Couldn't read this screenshot.");
         if (!shot.duplicate) onAdded([shot]);
-        update({ status: "done", count: shot.messages.length, duplicate: shot.duplicate, skipped: shot.overlap_skipped });
+        const m = shot.meta || {};
+        update({ status: "done", count: (shot.messages || []).length, duplicate: shot.duplicate, skipped: shot.overlap_skipped,
+                 app: m.platform && m.platform !== "unknown" ? (PLATFORMS.find((p) => p.id === m.platform)?.label || m.platform) : "",
+                 mode: m.mode, title: m.title, warning: shot.warning });
       } catch (e) {
         update({ status: "error", msg: e.message });
       }
@@ -377,7 +381,9 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
                 {q.status === "waiting" && "Waiting"}
                 {q.status === "reading" && "Reading text…"}
                 {q.status === "done" && (q.duplicate ? "Already added" :
-                  `${q.count} message${q.count === 1 ? "" : "s"} found` + (q.skipped ? ` · ${q.skipped} already in another screenshot` : ""))}
+                  `${q.count} message${q.count === 1 ? "" : "s"} found` + (q.skipped ? ` · ${q.skipped} already in another screenshot` : "")
+                  + (q.app ? ` · ${q.app}${q.mode ? `, ${q.mode}` : ""}` : ""))}
+                {q.status === "done" && q.warning && <em className="queue-warn">{q.warning}</em>}
                 {q.status === "error" && q.msg}
               </span>
             </li>
@@ -413,10 +419,12 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
    3. you say which sender is them and which is you, then Import */
 const HOW_TO = [
   { app: "WhatsApp", steps: ["Open the chat with them", "Tap their name (iPhone) or ⋮ > More (Android)", "Export chat > Without media", "Save or AirDrop the file to this Mac, then choose it here (.zip or .txt)"] },
-  { app: "Messenger", steps: ["Go to facebook.com/dyi > Download or transfer information", "Specific types of information > Messages", "Download to device, Format: JSON, Date range: All time", "When Facebook says it's ready, download the .zip and choose it here",
+  { app: "Messenger", steps: ["Go to facebook.com/dyi > Download or transfer information", "Specific types of information > Messages", "Download to device, Format: JSON (HTML also works), Date range: All time", "When Facebook says it's ready, download the .zip and choose it here",
       "Newer chats are end-to-end encrypted and aren't in that download. On messenger.com: profile photo > Privacy & safety > End-to-end encrypted chats > Message storage > Download secure storage data (screenshots work for those if this file isn't read)"] },
   { app: "Instagram", steps: ["Accounts Center > Your information and permissions > Download your information", "Messages only, Format: JSON", "Download the .zip and choose it here"] },
-  { app: "Telegram", steps: ["Telegram Desktop app > open the chat > ⋮ > Export chat history", "Untick photos/videos, Format: Machine-readable JSON", "Choose the result.json file here"] },
+  { app: "Telegram", steps: ["Telegram Desktop app > open the chat > ⋮ > Export chat history", "Untick photos/videos (HTML or JSON both work)", "Choose result.json or messages.html here"] },
+  { app: "LINE", steps: ["Open the chat > ≡ > Settings > Export chat history", "Save the .txt and choose it here"] },
+  { app: "Viber", steps: ["Viber can't export one chat as text, so use screenshots for Viber (below)"] },
 ];
 
 function ExportImport({ pid, personName, onImported }) {
@@ -438,7 +446,9 @@ function ExportImport({ pid, personName, onImported }) {
     try {
       const res = await api.importFile(pid, file);
       setFound(res);
-      if (res.conversations.length === 1) pick(res.conversations[0]);
+      // The chat with this person is listed first (matched by name): pick it, so usually it's one click.
+      const best = res.conversations[0];
+      if (res.conversations.length === 1 || best?.match) pick(best);
     } catch (e) { setMsg(e.message); }
     finally { setBusy(""); }
   }
@@ -474,7 +484,7 @@ function ExportImport({ pid, personName, onImported }) {
       <button className="btn" disabled={!!busy} onClick={() => input.current.click()}>
         {busy === "reading" ? "Reading the file…" : "Choose the file"}
       </button>
-      <input ref={input} type="file" accept=".zip,.json,.txt" hidden onChange={(e) => { read(e.target.files[0]); e.target.value = ""; }} />
+      <input ref={input} type="file" accept=".zip,.json,.txt,.html,.htm" hidden onChange={(e) => { read(e.target.files[0]); e.target.value = ""; }} />
       {msg && <p className="small" role="status" style={{ marginTop: 10 }}>{msg}</p>}
 
       {found && found.conversations.length > 1 && (
@@ -485,7 +495,7 @@ function ExportImport({ pid, personName, onImported }) {
             {list.map((c) => (
               <li key={c.id}>
                 <button className={c.id === chatId ? "picked" : ""} onClick={() => pick(c)}>
-                  <span>{c.title}</span>
+                  <span>{c.title}{c.match && <span className="tag">looks like {personName}</span>}</span>
                   <span className="muted small">{c.message_count} messages{c.last ? ` · until ${day(c.last)}` : ""}</span>
                 </button>
               </li>
@@ -534,7 +544,20 @@ export function Review({ shots, flagged, personName, reload, footer }) {
   const total = shots.reduce((n, s) => n + s.messages.length, 0);
   const act = (fn) => async (...args) => { await fn(...args); await reload(); };
   const [open, setOpen] = useState(new Set());
+  const [redo, setRedo] = useState(null);      // reading every screenshot again: { done, total, failed }
   const folded = (s) => !s.url && s.messages.length > COLLAPSE_OVER && !open.has(s.id);
+  const images = shots.filter((s) => s.url);
+
+  async function rereadAll() {
+    if (!confirm(`Read all ${images.length} screenshots again with imy's newest reader? Edits you made to their messages will be replaced.`)) return;
+    let failed = 0;
+    setRedo({ done: 0, total: images.length, failed });
+    for (let i = 0; i < images.length; i++) {
+      try { await api.reread(images[i].id); } catch { failed++; }
+      setRedo({ done: i + 1, total: images.length, failed });
+    }
+    await reload();
+  }
 
   return (
     <section className="panel">
@@ -542,12 +565,21 @@ export function Review({ shots, flagged, personName, reload, footer }) {
         {total} messages read from {shots.length} item{shots.length === 1 ? "" : "s"}. Check that each message is attributed to the right person.
         Tap a name to switch speaker, edit text directly, or remove anything that isn’t a message.
       </p>
+      {images.length > 1 && (
+        <p className="small">
+          {redo && redo.done < redo.total ? `Reading again… ${redo.done} of ${redo.total}`
+            : redo ? `Done. ${redo.total - redo.failed} screenshot${redo.total - redo.failed === 1 ? "" : "s"} read again${redo.failed ? `, ${redo.failed} couldn't be read` : ""}.`
+            : <>Added screenshots a while ago? <button className="link" onClick={rereadAll}>Read all {images.length} again</button> with the newest reader.</>}
+        </p>
+      )}
       {shots.length === 0 && <p className="empty">Nothing added yet. Go back and add screenshots or pasted text.</p>}
       {shots.map((s, idx) => (
         <article key={s.id} className="shot">
           <header>
             <strong>{s.filename}</strong>
-            <span className="tag">{s.platform}</span>
+            <span className="tag">{PLATFORMS.find((p) => p.id === s.platform)?.label || s.platform}</span>
+            {s.meta?.title && s.url && <span className="tag">chat: {s.meta.title}</span>}
+            {s.meta?.group && <span className="tag">group chat</span>}
             {flagged.has(s.id) && <span className="tag warn">Couldn’t match names, check the speakers</span>}
             <span className="grow" />
             {s.url && <button className="btn small" title="Read this screenshot again with imy's latest reader"

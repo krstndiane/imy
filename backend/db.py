@@ -1,7 +1,7 @@
 """db.py - SQLite storage.
 
 Four tables:
-  persons       one row per person you've set up (+ their 21 interview answers as JSON)
+  persons       one row per person you've set up (+ their interview answers as JSON)
   screenshots   one row per uploaded screenshot (or pasted text import)
   messages      every extracted message, labelled speaker = 'user' or 'person'
   chat_messages the live conversation history in Chat Mode
@@ -64,23 +64,37 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Columns added after the first version. Old databases get them on start-up.
+MIGRATIONS = [
+    ("persons", "platform", "TEXT NOT NULL DEFAULT ''"),   # the app this chat should look like
+    ("persons", "look", "TEXT NOT NULL DEFAULT '{}'"),     # look settings: {"mode": "auto|light|dark", "colors": true}
+    ("screenshots", "meta", "TEXT NOT NULL DEFAULT '{}'"), # what the reader noticed: app, dark/light, colours, chat name
+    ("screenshots", "sha1", "TEXT"),                       # fingerprint of the image, to skip exact repeats
+]
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with db() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")   # readers never wait for a writer (and vice versa)
         conn.executescript(SCHEMA)
-        # Added later: the app the user normally talks to this person in (sets the chat's look).
-        if "platform" not in [c["name"] for c in conn.execute("PRAGMA table_info(persons)")]:
-            conn.execute("ALTER TABLE persons ADD COLUMN platform TEXT NOT NULL DEFAULT ''")
+        for table, column, decl in MIGRATIONS:
+            if column not in [c["name"] for c in conn.execute(f"PRAGMA table_info({table})")]:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shots_person ON screenshots(person_id, id)")
 
 
 @contextmanager
 def db():
     """Open a connection, commit on success, roll back on error."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: when another request is writing, wait for it (up to 30 s) instead of failing with
+    # "database is locked", which used to show up as a crash when uploads and chat overlapped.
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
     try:
         yield conn
         conn.commit()

@@ -149,6 +149,12 @@ ACK_TL = ["ah oks oks", "ahh gets", "nice naman", "buti naman"]
 ACK_EN = ["ah okay", "oh i see", "nice", "that's good"]
 
 
+def rule_of(user_text: str) -> str | None:
+    """Name of the first rule that recognises this message (e.g. "greeting"), or None."""
+    t = user_text.strip()
+    return next((name for name, rx, _, _ in COMPILED if rx.search(t)), None)
+
+
 def covers(user_text: str) -> bool:
     """Does any rule recognise this message?"""
     return any(rx.search(user_text.strip()) for _, rx, _, _ in COMPILED)

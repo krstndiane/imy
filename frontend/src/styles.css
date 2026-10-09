@@ -214,27 +214,48 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .field-wrap { flex: 1; position: relative; display: flex; }
 .composer input { border-radius: 999px; padding: 11px 18px; }
 .avatar.mini, .meta, .receipt, .dot { display: none; }
+.chat.skin-imy .receipt { text-align: right; align-self: flex-end; }
 .icon-svg { display: block; }
 
 /* ---------- app skins ----------
-   The chat is dressed up as the app chosen in setup ("Where you talk"), in the current light/dark mode.
+   The chat is dressed up as the app you talk in: Messenger, iMessage, Instagram, WhatsApp, Telegram or Viber.
+   data-mode="light|dark" on .chat picks the palette (it follows your screenshots unless you choose in "Chat look").
+   Colours measured from your own screenshots are set inline by Chat.jsx (--c-user, --c-them...) and win over these.
    Each skin only sets variables; the shared rules below read them. Which icons appear is in platforms.js. */
-.skin-messenger { --c-bg: #fff; --c-head: #fff; --c-head-ink: #050505; --c-ink: #050505; --c-user: #0084ff; --c-user-ink: #fff; --c-them: #f0f0f0; --c-them-ink: #050505;
-  --c-field: #f0f2f5; --c-line: #e5e5e5; --c-r: 18px; --c-tight: 4px; --c-accent: #0084ff; --c-font: "Segoe UI", Helvetica, Arial, sans-serif; }
-.skin-imessage { --c-bg: #fff; --c-head: #f6f6f6; --c-head-ink: #000; --c-ink: #000; --c-user: #007aff; --c-user-ink: #fff; --c-them: #e9e9eb; --c-them-ink: #000;
-  --c-field: #fff; --c-line: #d1d1d6; --c-r: 18px; --c-tight: 18px; --c-accent: #007aff; --c-font: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif; }
-.skin-instagram { --c-bg: #fff; --c-head: #fff; --c-head-ink: #000; --c-ink: #000; --c-user: linear-gradient(180deg, #a033ff, #3797f0); --c-user-ink: #fff; --c-them: #efefef; --c-them-ink: #000;
-  --c-field: #fff; --c-line: #dbdbdb; --c-r: 22px; --c-tight: 4px; --c-accent: #3797f0; --c-font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-.skin-whatsapp { --c-bg: #efeae2; --c-head: #008069; --c-head-ink: #fff; --c-ink: #111b21; --c-user: #d9fdd3; --c-user-ink: #111b21; --c-them: #fff; --c-them-ink: #111b21;
-  --c-field: #fff; --c-line: transparent; --c-r: 8px; --c-tight: 8px; --c-accent: #00a884; --c-font: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
-.skin-telegram { --c-bg: #c9dbe9; --c-head: #fff; --c-head-ink: #000; --c-ink: #000; --c-user: #effdde; --c-user-ink: #000; --c-them: #fff; --c-them-ink: #000;
-  --c-field: #fff; --c-line: #dfe5ea; --c-r: 14px; --c-tight: 6px; --c-accent: #3390ec; --c-font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.skin-messenger { --c-bg: #fff; --c-head: #fff; --c-head-ink: #050505; --c-ink: #050505; --c-sub: #65676b; --c-user: #0084ff; --c-user-solid: #0084ff;
+  --c-user-ink: #fff; --c-them: #f0f0f0; --c-them-ink: #050505; --c-field: #f0f2f5; --c-line: #e5e5e5; --c-r: 18px; --c-tight: 4px;
+  --c-accent: #0084ff; --c-font: -apple-system, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif; }
+.skin-imessage { --c-bg: #fff; --c-head: rgba(246, 246, 246, .94); --c-head-ink: #000; --c-ink: #000; --c-sub: #8e8e93; --c-user: #007aff; --c-user-solid: #007aff;
+  --c-user-ink: #fff; --c-them: #e9e9eb; --c-them-ink: #000; --c-field: #fff; --c-line: #d1d1d6; --c-r: 18px; --c-tight: 18px;
+  --c-accent: #007aff; --c-font: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.skin-instagram { --c-bg: #fff; --c-head: #fff; --c-head-ink: #000; --c-ink: #000; --c-sub: #737373; --c-user: linear-gradient(180deg, #a033ff, #5b51d8 50%, #3797f0);
+  --c-user-solid: #6c5ce7; --c-user-ink: #fff; --c-them: #efefef; --c-them-ink: #000; --c-field: #fff; --c-line: #dbdbdb; --c-r: 22px; --c-tight: 4px;
+  --c-accent: #3797f0; --c-font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.skin-whatsapp { --c-bg: #efeae2; --c-wall-dot: rgba(74, 61, 40, .06); --c-head: #008069; --c-head-ink: #fff; --c-ink: #111b21; --c-sub: #667781;
+  --c-user: #d9fdd3; --c-user-solid: #d9fdd3; --c-user-ink: #111b21; --c-them: #fff; --c-them-ink: #111b21; --c-field: #fff; --c-line: transparent;
+  --c-chip: #fff; --c-chip-ink: #54656f; --c-r: 8px; --c-tight: 8px; --c-accent: #00a884; --c-font: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.skin-telegram { --c-bg: linear-gradient(160deg, #d6e6b5 0%, #a6cba1 40%, #8fbcc4 75%, #b5c9e4 100%); --c-head: #fff; --c-head-ink: #000; --c-ink: #000; --c-sub: #8e8e93;
+  --c-user: #effdde; --c-user-solid: #effdde; --c-user-ink: #000; --c-them: #fff; --c-them-ink: #000; --c-field: #fff; --c-line: #dfe5ea;
+  --c-chip: rgba(0, 0, 0, .22); --c-chip-ink: #fff; --c-r: 15px; --c-tight: 6px; --c-accent: #3390ec; --c-tick: #4fae4e;
+  --c-font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.skin-viber { --c-bg: #fff; --c-head: #fff; --c-head-ink: #000; --c-ink: #000; --c-sub: #8e8e93; --c-user: #7360f2; --c-user-solid: #7360f2; --c-user-ink: #fff;
+  --c-them: #f2f2f7; --c-them-ink: #000; --c-field: #f2f2f7; --c-line: #e5e5ea; --c-chip: #f2f2f7; --c-chip-ink: #8e8e93; --c-r: 18px; --c-tight: 6px;
+  --c-accent: #7360f2; --c-font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 
-[data-theme="dark"] .skin-messenger { --c-bg: #000; --c-head: #000; --c-head-ink: #e4e6eb; --c-ink: #e4e6eb; --c-them: #303030; --c-them-ink: #e4e6eb; --c-field: #303030; --c-line: #262626; --c-accent: #2e9bff; }
-[data-theme="dark"] .skin-imessage { --c-bg: #000; --c-head: #1c1c1e; --c-head-ink: #fff; --c-ink: #fff; --c-user: #0a84ff; --c-them: #262628; --c-them-ink: #fff; --c-field: #000; --c-line: #38383a; --c-accent: #0a84ff; }
-[data-theme="dark"] .skin-instagram { --c-bg: #000; --c-head: #000; --c-head-ink: #f5f5f5; --c-ink: #f5f5f5; --c-them: #262626; --c-them-ink: #f5f5f5; --c-field: #000; --c-line: #363636; }
-[data-theme="dark"] .skin-whatsapp { --c-bg: #0b141a; --c-head: #202c33; --c-head-ink: #e9edef; --c-ink: #e9edef; --c-user: #005c4b; --c-user-ink: #e9edef; --c-them: #202c33; --c-them-ink: #e9edef; --c-field: #2a3942; }
-[data-theme="dark"] .skin-telegram { --c-bg: #0e1621; --c-head: #17212b; --c-head-ink: #fff; --c-ink: #fff; --c-user: #2b5278; --c-user-ink: #fff; --c-them: #182533; --c-them-ink: #fff; --c-field: #17212b; --c-line: #101921; --c-accent: #6ab3f3; }
+.chat.skin-messenger[data-mode="dark"], [data-theme="dark"] .plat.skin-messenger { --c-bg: #000; --c-head: #000; --c-head-ink: #e4e6eb; --c-ink: #e4e6eb; --c-sub: #b0b3b8;
+  --c-them: #303030; --c-them-ink: #e4e6eb; --c-field: #303030; --c-line: #262626; --c-accent: #2e9bff; }
+.chat.skin-imessage[data-mode="dark"], [data-theme="dark"] .plat.skin-imessage { --c-bg: #000; --c-head: rgba(28, 28, 30, .94); --c-head-ink: #fff; --c-ink: #fff; --c-sub: #8e8e93;
+  --c-user: #0a84ff; --c-user-solid: #0a84ff; --c-them: #262628; --c-them-ink: #fff; --c-field: #000; --c-line: #38383a; --c-accent: #0a84ff; }
+.chat.skin-instagram[data-mode="dark"], [data-theme="dark"] .plat.skin-instagram { --c-bg: #000; --c-head: #000; --c-head-ink: #f5f5f5; --c-ink: #f5f5f5; --c-sub: #a8a8a8;
+  --c-them: #262626; --c-them-ink: #f5f5f5; --c-field: #000; --c-line: #363636; }
+.chat.skin-whatsapp[data-mode="dark"], [data-theme="dark"] .plat.skin-whatsapp { --c-bg: #0b141a; --c-wall-dot: rgba(255, 255, 255, .025); --c-head: #202c33; --c-head-ink: #e9edef;
+  --c-ink: #e9edef; --c-sub: #8696a0; --c-user: #005c4b; --c-user-solid: #005c4b; --c-user-ink: #e9edef; --c-them: #202c33; --c-them-ink: #e9edef;
+  --c-field: #2a3942; --c-chip: #182229; --c-chip-ink: #8696a0; }
+.chat.skin-telegram[data-mode="dark"], [data-theme="dark"] .plat.skin-telegram { --c-bg: #0e1621; --c-head: #17212b; --c-head-ink: #fff; --c-ink: #fff; --c-sub: #708499;
+  --c-user: #2b5278; --c-user-solid: #2b5278; --c-user-ink: #fff; --c-them: #182533; --c-them-ink: #fff; --c-field: #17212b; --c-line: #101921;
+  --c-chip: rgba(255, 255, 255, .08); --c-accent: #6ab3f3; --c-tick: #6ab3f3; }
+.chat.skin-viber[data-mode="dark"], [data-theme="dark"] .plat.skin-viber { --c-bg: #121212; --c-head: #1c1c1e; --c-head-ink: #fff; --c-ink: #fff; --c-sub: #8e8e93;
+  --c-user: #665cd6; --c-user-solid: #665cd6; --c-them: #2c2c2e; --c-them-ink: #fff; --c-field: #2c2c2e; --c-line: #2c2c2e; --c-chip: #2c2c2e; --c-accent: #8b7cf6; }
 
 .chat:not(.skin-imy) { background: var(--c-bg); color: var(--c-ink); font-family: var(--c-font); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); max-width: 560px; }
 .chat:not(.skin-imy) .chat-head { background: var(--c-head); color: var(--c-head-ink); padding: 8px 10px; gap: 10px; flex-wrap: nowrap; border-bottom: 1px solid var(--c-line); }
@@ -243,6 +264,12 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .chat:not(.skin-imy) .chat-head .muted { color: inherit; opacity: .65; font-size: .78rem; }
 .chat:not(.skin-imy) .avatar { background: linear-gradient(180deg, #b7bcc9, #868b99); color: #fff; }
 .chat:not(.skin-imy) .avatar.big { width: 38px; height: 38px; font-size: .8rem; }
+.name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.name-row h1 { min-width: 0; }
+/* the small "imy" tag next to the name: this is an AI version, so a screenshot of it can't pass as the real chat */
+.imy-mark { flex: none; font: 700 .58rem/1 var(--body); letter-spacing: .04em; padding: 3px 6px; border-radius: 999px; border: 1px solid currentColor; opacity: .5; text-transform: lowercase; }
+.status.is-typing { opacity: 1 !important; font-style: normal; }
+.chat.skin-telegram .status.is-typing, .chat.skin-viber .status.is-typing { color: var(--c-accent); }
 .dot { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 50%; background: #31a24c; border: 2px solid var(--c-head); }
 .chat:not(.skin-imy) .dot { display: block; }
 /* header + message-box icons */
@@ -258,8 +285,9 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .chat:not(.skin-imy) .style-panel, .chat:not(.skin-imy) > .banner { margin: 10px 12px 0; }
 .chat:not(.skin-imy) .thread { padding: 14px 12px; gap: 2px; }
 .chat:not(.skin-imy) .bubble-row.first { margin-top: 8px; }
-.chat:not(.skin-imy) .bubble { border-radius: var(--c-r); padding: 7px 12px; line-height: 1.35; font-size: .95rem; }
-.chat:not(.skin-imy) .bubble.user { background: var(--c-user); color: var(--c-user-ink); }
+.chat:not(.skin-imy) .bubble { position: relative; z-index: 0; border-radius: var(--c-r); padding: 7px 12px; line-height: 1.35; font-size: .95rem; }
+/* Messenger and Instagram paint one gradient down the whole screen across your bubbles: background-attachment: fixed does that */
+.chat:not(.skin-imy) .bubble.user { background: var(--c-user); background-attachment: fixed; color: var(--c-user-ink); }
 .chat:not(.skin-imy) .bubble.person { background: var(--c-them); color: var(--c-them-ink); }
 /* bubbles in a run hug each other on the sender's side, like the real apps */
 .chat:not(.skin-imy) .bubble-row.user:not(.first) .bubble { border-top-right-radius: var(--c-tight); }
@@ -267,66 +295,129 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .chat:not(.skin-imy) .bubble-row.person:not(.first) .bubble { border-top-left-radius: var(--c-tight); }
 .chat:not(.skin-imy) .bubble-row.person:not(.last) .bubble { border-bottom-left-radius: var(--c-tight); }
 .chat:not(.skin-imy) .why, .chat:not(.skin-imy) .empty { color: var(--c-ink); opacity: .55; }
-.chat:not(.skin-imy) .composer { padding: 8px 8px; gap: 2px; border-top: 0; background: var(--c-bg); align-items: center; }
+.chat:not(.skin-imy) .composer { padding: 8px 8px; gap: 2px; border-top: 0; background: var(--c-head); align-items: center; }
 .chat:not(.skin-imy) .field-wrap { margin: 0 4px; }
 .chat:not(.skin-imy) .composer input { background: var(--c-field); color: var(--c-ink); border: 1px solid var(--c-line); padding: 8px 40px 8px 14px; font-family: var(--c-font); }
 .chat:not(.skin-imy) .composer input::placeholder { color: var(--c-ink); opacity: .5; }
 .in-field { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .chat:not(.skin-imy) .send { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--c-accent); flex: none; opacity: 1; }
 .chat:not(.skin-imy) .send:hover:not(:disabled) { background: color-mix(in srgb, currentColor 14%, transparent); }
+.chat:not(.skin-imy) .send:disabled { cursor: default; }
 
-/* Messenger: their small profile picture sits beside the last bubble of a run */
-.chat.skin-messenger .bubble-row.person, .chat.skin-instagram .bubble-row.person { position: relative; padding-left: 36px; }
-.chat.skin-messenger .avatar.mini, .chat.skin-instagram .avatar.mini { display: grid; position: absolute; left: 0; top: 0; width: 28px; height: 28px; font-size: .65rem; }
+/* time separators and date chips */
+.sep { align-self: center; margin: 14px 0 6px; font-size: .72rem; font-weight: 600; color: var(--muted); font-family: var(--body); }
+.chat:not(.skin-imy) .sep { color: var(--c-sub); font-family: var(--c-font); }
+.chat.skin-imessage .sep { font-weight: 500; }
+.sep.day span { display: inline-block; padding: 5px 12px; border-radius: 8px; background: var(--c-chip, var(--soft)); color: var(--c-chip-ink, var(--muted)); }
+.chat.skin-whatsapp .sep.day span { text-transform: uppercase; font-size: .7rem; box-shadow: 0 1px .5px rgba(11, 20, 26, .13); }
+.chat.skin-telegram .sep.day span { border-radius: 999px; }
+
+/* read receipts under your latest message */
+.chat .receipt { display: block; font-size: .7rem; font-weight: 500; color: var(--c-sub, var(--muted)); margin: 3px 4px 0; font-family: inherit; }
+.chat .receipt.seen-av .avatar { width: 15px; height: 15px; font-size: .38rem; }
+.chat .receipt.sent-dot { width: 14px; height: 14px; border-radius: 50%; display: grid; place-items: center; font-size: .5rem; color: var(--c-bg, #fff); background: var(--c-sub, var(--muted)); }
+.chat .receipt.failed { background: none; border: 0; padding: 0; cursor: pointer; color: var(--danger); font-size: .72rem; }
+/* ✓✓ inside the bubble (WhatsApp, Telegram) */
+.ticks { font-weight: 400; letter-spacing: -3px; margin-left: 3px; padding-right: 3px; }
+.chat.skin-whatsapp .ticks { color: var(--c-sub); }
+.chat.skin-whatsapp .ticks.seen { color: #53bdeb; }
+.chat.skin-telegram .ticks { color: var(--c-tick); }
+.chat.skin-whatsapp .meta, .chat.skin-telegram .meta { display: inline-block; float: right; margin: 8px -4px -3px 12px; font-size: .68rem; opacity: .75; white-space: nowrap; color: var(--c-sub); }
+.chat.skin-telegram .bubble.user .meta { color: var(--c-tick); }
+
+/* typing indicator bubble */
+.chat .bubble.typing { color: var(--c-them-ink, var(--ink)); }
+.typing-row { animation: pop .18s ease-out; }
+@keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.96); } to { opacity: 1; transform: none; } }
+
+/* Messenger + Instagram: their small profile picture sits beside the last bubble of a run */
+.chat.skin-messenger .bubble-row.person, .chat.skin-instagram .bubble-row.person, .chat.skin-viber .bubble-row.person { position: relative; padding-left: 36px; }
+.chat.skin-messenger .avatar.mini, .chat.skin-instagram .avatar.mini, .chat.skin-viber .avatar.mini { display: grid; position: absolute; left: 0; bottom: 0; width: 28px; height: 28px; font-size: .65rem; }
 .chat.skin-messenger .bubble-row.person.last .bubble, .chat.skin-instagram .bubble-row.person.last .bubble { min-height: 28px; }
-.chat.skin-messenger .composer input { border-color: transparent; }
+.chat.skin-messenger .bubble-row.person:has(.teach-done, .teach-fix, .why) .avatar.mini,
+.chat.skin-instagram .bubble-row.person:has(.teach-done, .teach-fix, .why) .avatar.mini,
+.chat.skin-viber .bubble-row.person:has(.teach-done, .teach-fix, .why) .avatar.mini { bottom: auto; top: 0; }
+.chat.skin-messenger .composer input { border-color: transparent; border-radius: 20px; }
 .chat.skin-messenger .chat-head { box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.chat.skin-messenger .receipt { align-self: flex-end; }
 
 /* Instagram: black icons, outlined message box with the camera in a blue circle */
 .chat.skin-instagram .ic, .chat.skin-instagram .ic-btn { color: var(--c-ink); }
+.chat.skin-instagram .composer { background: var(--c-bg); }
 .chat.skin-instagram .composer .ic:first-child { background: var(--c-accent); color: #fff; width: 32px; height: 32px; }
+.chat.skin-instagram .composer input { border-radius: 22px; }
 .chat.skin-instagram .dot { display: none; }
 .chat.skin-instagram .send.ready { color: var(--c-accent); }
 
-/* iMessage: back on the left, picture over the name in the middle, bubble tails, "Delivered" */
-.chat.skin-imessage .chat-head { display: grid; grid-template-columns: 1fr auto 1fr; grid-template-areas: "back av icons" "back name icons"; row-gap: 2px; padding: 8px 10px 6px; }
+/* iMessage: back on the left, picture over the name in the middle, bubble tails, "Delivered" / "Read" */
+.chat.skin-imessage .chat-head { display: grid; grid-template-columns: 1fr auto 1fr; grid-template-areas: "back av icons" "back name icons"; row-gap: 2px; padding: 8px 10px 6px; backdrop-filter: blur(20px); }
 .chat.skin-imessage .back { grid-area: back; justify-self: start; }
 .chat.skin-imessage .chat-head .avatar.big { grid-area: av; justify-self: center; width: 44px; height: 44px; }
 .chat.skin-imessage .who-line { grid-area: name; text-align: center; }
+.chat.skin-imessage .name-row { justify-content: center; }
 .chat.skin-imessage .head-icons { grid-area: icons; justify-self: end; }
-.chat.skin-imessage .chat-head h1 { font-size: .72rem; font-weight: 400; }
+.chat.skin-imessage .chat-head h1 { font-size: .74rem; font-weight: 500; }
 .chat.skin-imessage .who-line p { display: none; }
-.chat.skin-imessage .bubble-row.user.last .bubble { border-bottom-right-radius: 4px; }
-.chat.skin-imessage .bubble-row.person.last .bubble { border-bottom-left-radius: 4px; }
-.chat.skin-imessage .receipt { display: block; font-size: .7rem; color: var(--c-ink); opacity: .5; margin: 2px 4px 0; font-weight: 500; }
+.chat.skin-imessage .bubble-row.user.last .bubble::before, .chat.skin-imessage .bubble-row.person.last .bubble::before {
+  content: ""; position: absolute; z-index: -1; bottom: 0; height: 20px; width: 20px; }
+.chat.skin-imessage .bubble-row.user.last .bubble::after, .chat.skin-imessage .bubble-row.person.last .bubble::after {
+  content: ""; position: absolute; z-index: -1; bottom: 0; width: 10px; height: 20px; background: var(--c-bg); }
+.chat.skin-imessage .bubble-row.user.last .bubble::before { right: -7px; background: var(--c-user-solid); border-bottom-left-radius: 16px 14px; }
+.chat.skin-imessage .bubble-row.user.last .bubble::after { right: -10px; border-bottom-left-radius: 10px; }
+.chat.skin-imessage .bubble-row.person.last .bubble::before { left: -7px; background: var(--c-them); border-bottom-right-radius: 16px 14px; }
+.chat.skin-imessage .bubble-row.person.last .bubble::after { left: -10px; border-bottom-right-radius: 10px; }
+.chat.skin-imessage .composer { position: relative; background: var(--c-bg); }
 .chat.skin-imessage .composer .ic { color: var(--c-ink); opacity: .55; }
 .chat.skin-imessage .composer .ic:first-child { background: var(--c-them); opacity: 1; width: 32px; height: 32px; }
+.chat.skin-imessage .composer input { border-radius: 18px; }
 .chat.skin-imessage .send { display: none; }
 .chat.skin-imessage .send.ready { display: grid; position: absolute; right: 14px; background: var(--c-accent); color: #fff; width: 28px; height: 28px; }
 .chat.skin-imessage .send.ready:hover:not(:disabled) { background: var(--c-accent); }
-.chat.skin-imessage .composer { position: relative; }
 .chat.skin-imessage .composer:has(.send.ready) .in-field { display: none; }
 .chat.skin-imessage .send .icon-svg { width: 18px; height: 18px; stroke-width: 2.6; }
+.chat.skin-imessage .receipt { align-self: flex-end; }
 
-/* WhatsApp + Telegram: the time (and ticks on yours) inside each bubble, round send button */
-.chat.skin-whatsapp .meta, .chat.skin-telegram .meta { display: inline-block; float: right; margin: 8px -4px -3px 12px; font-size: .68rem; opacity: .6; white-space: nowrap; }
-.chat.skin-whatsapp .meta b { color: #53bdeb; font-weight: 400; }
-.chat.skin-telegram .meta b { color: #4fae4e; font-weight: 400; }
-[data-theme="dark"] .chat.skin-telegram .meta b { color: #6ab3f3; }
+/* WhatsApp + Telegram: wallpaper, the time (and ticks on yours) inside each bubble, tails, round send button */
+.chat.skin-whatsapp .thread { background-image: radial-gradient(var(--c-wall-dot) 1.2px, transparent 1.6px), radial-gradient(var(--c-wall-dot) 1.2px, transparent 1.6px);
+  background-size: 26px 26px; background-position: 0 0, 13px 13px; }
 .chat.skin-whatsapp .bubble, .chat.skin-telegram .bubble { box-shadow: 0 1px .5px rgba(11, 20, 26, .13); }
-.chat.skin-whatsapp .bubble.typing .meta, .chat.skin-telegram .bubble.typing .meta { display: none; }
 .chat.skin-whatsapp .bubble-row.user.first .bubble { border-top-right-radius: 0; }
 .chat.skin-whatsapp .bubble-row.person.first .bubble { border-top-left-radius: 0; }
+.chat.skin-whatsapp .bubble-row.user.first .bubble::before, .chat.skin-whatsapp .bubble-row.person.first .bubble::before {
+  content: ""; position: absolute; top: 0; width: 0; height: 0; border-style: solid; }
+.chat.skin-whatsapp .bubble-row.user.first .bubble::before { right: -8px; border-width: 0 0 13px 8px; border-color: transparent transparent transparent var(--c-user-solid); }
+.chat.skin-whatsapp .bubble-row.person.first .bubble::before { left: -8px; border-width: 0 8px 13px 0; border-color: transparent var(--c-them) transparent transparent; }
+.chat.skin-telegram .bubble-row.user.last .bubble { border-bottom-right-radius: 0; }
+.chat.skin-telegram .bubble-row.person.last .bubble { border-bottom-left-radius: 0; }
+.chat.skin-telegram .bubble-row.user.last .bubble::before, .chat.skin-telegram .bubble-row.person.last .bubble::before {
+  content: ""; position: absolute; bottom: 0; width: 0; height: 0; border-style: solid; }
+.chat.skin-telegram .bubble-row.user.last .bubble::before { right: -8px; border-width: 13px 0 0 8px; border-color: transparent transparent transparent var(--c-user-solid); }
+.chat.skin-telegram .bubble-row.person.last .bubble::before { left: -8px; border-width: 13px 8px 0 0; border-color: transparent var(--c-them) transparent transparent; }
+.chat.skin-whatsapp .thread, .chat.skin-telegram .thread { padding-left: 18px; padding-right: 18px; }
 .chat.skin-whatsapp .chat-head .ic, .chat.skin-whatsapp .chat-head .ic-btn { color: var(--c-head-ink); }
 .chat.skin-whatsapp .composer .ic, .chat.skin-telegram .composer .ic, .chat.skin-telegram .chat-head .ic, .chat.skin-telegram .chat-head .ic-btn, .chat.skin-telegram .back { color: var(--c-ink); opacity: .6; }
-.chat.skin-whatsapp .composer, .chat.skin-telegram .composer { background: transparent; }
-.chat.skin-whatsapp .composer input { border-color: transparent; }
+.chat.skin-whatsapp .composer { background: transparent; }
+.chat.skin-whatsapp .composer input { border-color: transparent; border-radius: 24px; }
 .chat.skin-whatsapp .send { background: var(--c-accent); color: #fff; width: 40px; height: 40px; }
 .chat.skin-whatsapp .send:hover:not(:disabled) { background: var(--c-accent); }
 .chat.skin-telegram .composer { background: var(--c-head); border-top: 1px solid var(--c-line); }
 .chat.skin-telegram .composer input { border-color: transparent; background: transparent; }
-.chat.skin-telegram .chat-head .muted { color: var(--c-accent); opacity: 1; }
-.chat.skin-whatsapp .dot, .chat.skin-telegram .dot, .chat.skin-imessage .dot { display: none; }
+.chat.skin-telegram .chat-head .muted { color: var(--c-sub); opacity: 1; }
+.chat.skin-whatsapp .dot, .chat.skin-telegram .dot, .chat.skin-imessage .dot, .chat.skin-viber .dot { display: none; }
+
+/* Viber: purple accents, avatar beside their messages, date chips */
+.chat.skin-viber .chat-head .ic, .chat.skin-viber .chat-head .ic-btn, .chat.skin-viber .composer .ic { color: var(--c-accent); }
+.chat.skin-viber .composer input { border-color: transparent; border-radius: 20px; }
+
+/* "Chat look" panel */
+.look-panel .chips { margin: 4px 0 12px; }
+.look-panel .chip { padding: 6px 12px; font-size: .85rem; }
+.swatch { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--line); vertical-align: middle; margin-left: 6px; }
+
+/* a screen that broke shows this instead of a blank page */
+.crash { max-width: 520px; margin: 60px auto; text-align: center; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.crash .actions { justify-content: center; margin-top: 16px; }
+.banner.warn { background: var(--warn-bg); }
 
 /* platform picker (setup step 1): each card previews its own skin in the current mode */
 .plats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 18px; }
@@ -417,3 +508,17 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .teach-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .teach { transition: none; } }
 .train-body .panel > .sub-head:first-child { margin-top: 0; }
+.queue-warn { display: block; font-style: normal; color: var(--warn-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; padding: 4px 8px; margin-top: 4px; font-size: .8rem; }
+
+/* 👍 / Fix sit beside their last bubble (not under it), so they never leave gaps in the conversation */
+.bubble-row.person { position: relative; }
+.bubble-row.person > .teach { position: absolute; left: calc(100% + 6px); bottom: 2px; margin: 0; white-space: nowrap; }
+@media (hover: none) { .bubble-row.person > .teach { opacity: .55; } }   /* phones can't hover: keep them faintly visible */
+@media (max-width: 760px) { .bubble-row.person > .teach { left: auto; right: -4px; bottom: -22px; z-index: 1; } .bubble-row.person.last:has(> .teach) { margin-bottom: 20px; } }
+
+/* inside a chat dressed as an app, imy's own panels and banners follow that chat's light/dark mode */
+.chat[data-mode="light"] { --solid: #ffffff; --field: #ffffff; --ink: #0a0a0c; --muted: #5b6b82; --line: rgba(10, 10, 12, .12); --soft: rgba(10, 10, 12, .06);
+  --warn-bg: #fff6e6; --warn-line: #f5d9a8; --warn-ink: #5a3d00; --err-bg: #fdecef; --err-line: #efbcc6; --err-ink: #7d1f31; --danger: #c0364c; }
+.chat[data-mode="dark"] { --solid: #15151a; --field: rgba(255, 255, 255, .06); --ink: #ffffff; --muted: #94a3b8; --line: rgba(255, 255, 255, .1); --soft: rgba(255, 255, 255, .07);
+  --warn-bg: #2a2112; --warn-line: rgba(245, 158, 11, .3); --warn-ink: #fcd9a0; --err-bg: #2b1218; --err-line: rgba(244, 63, 94, .35); --err-ink: #ffb8c3; --danger: #ff7d90; }
+.chat:not(.skin-imy) .mode-switch button:not(.on) { background: var(--solid); color: var(--muted); border-color: var(--line); }

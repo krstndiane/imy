@@ -117,3 +117,82 @@ def test_split_sessions_on_long_silence():
     sessions = importers.split_sessions(msgs, gap_hours=6)
     assert [len(s) for s in sessions] == [3, 2]
     assert [len(s) for s in importers.split_sessions([{"ts": None}] * 5, max_len=2)] == [2, 2, 1]
+
+
+# ------------------------------------------------------------------ formats recognised by content
+TG_HTML = """<!DOCTYPE html><html><head><title>Exported Data</title></head><body>
+<div class="page_header"><div class="text bold">Mia</div></div>
+<div class="history">
+<div class="message service" id="message-1"><div class="body details">5 January 2024</div></div>
+<div class="message default clearfix" id="message1">
+ <div class="pull_left userpic_wrap"><div class="userpic">M</div></div>
+ <div class="body"><div class="pull_right date details" title="05.01.2024 22:15:03 UTC+08:00">22:15</div>
+  <div class="from_name">Mia</div><div class="text">hello<br>kamusta ka</div></div></div>
+<div class="message default clearfix joined" id="message2">
+ <div class="body"><div class="pull_right date details" title="05.01.2024 22:15:40 UTC+08:00">22:15</div>
+  <div class="text">miss na kita</div></div></div>
+<div class="message default clearfix" id="message3">
+ <div class="body"><div class="pull_right date details" title="05.01.2024 22:16:00 UTC+08:00">22:16</div>
+  <div class="from_name">Ana</div><div class="text">miss you too &lt;3</div></div></div>
+</div></body></html>"""
+
+
+def test_telegram_html_default_export():
+    [c] = importers.read_export("messages.html", io.BytesIO(TG_HTML.encode()))
+    assert c.platform == "telegram"
+    assert [(m.sender, m.text) for m in c.messages] == [
+        ("Mia", "hello\nkamusta ka"), ("Mia", "miss na kita"), ("Ana", "miss you too <3")]
+    assert c.messages[0].ts is not None
+
+
+FB_HTML = """<html><head><title>Lawrence Panes</title></head><body><div class="_a706">
+<div class="pam _3-95 _2ph- _a6-g uiBoxWhite noborder"><div class="_3-95 _2pim _a6-h _a6-i">Lawrence Panes</div>
+<div class="_3-95 _a6-p"><div><div></div><div>tara gym bukas</div><div></div></div></div>
+<div class="_3-94 _a6-o">Jan 05, 2024 10:16:00 pm</div></div>
+<div class="pam _3-95 _2ph- _a6-g uiBoxWhite noborder"><div class="_3-95 _2pim _a6-h _a6-i">Diane</div>
+<div class="_3-95 _a6-p"><div><div></div><div>sige ba</div><div></div></div></div>
+<div class="_3-94 _a6-o">Jan 05, 2024 10:15:00 pm</div></div>
+</div></body></html>"""
+
+
+def test_facebook_html_download_is_read_oldest_first():
+    zipped = _zip({"your_facebook_activity/messages/inbox/lawrencepanes_123/message_1.html": FB_HTML})
+    [c] = importers.read_export("facebook-diane.zip", zipped)
+    assert c.platform == "messenger" and c.title == "Lawrence Panes"
+    assert [(m.sender, m.text) for m in c.messages] == [("Diane", "sige ba"), ("Lawrence Panes", "tara gym bukas")]
+
+
+def test_messenger_secure_storage_json_camelcase():
+    data = {"participants": ["Diane", "Lawrence Panes"], "threadName": "Lawrence Panes", "messages": [
+        {"isUnsent": False, "media": [], "reactions": [], "senderName": "Lawrence Panes", "text": "uy", "timestamp": 1790000000000, "type": "text"},
+        {"isUnsent": True, "senderName": "Diane", "text": "oops", "timestamp": 1790000001000},
+        {"isUnsent": False, "senderName": "Diane", "text": "hii", "timestamp": 1790000002000, "type": "text"},
+    ]}
+    [c] = importers.read_export("secure_storage/lawrence.json", io.BytesIO(json.dumps(data).encode()))
+    assert c.title == "Lawrence Panes" and c.platform == "messenger"
+    assert [(m.sender, m.text) for m in c.messages] == [("Lawrence Panes", "uy"), ("Diane", "hii")]
+    assert abs(c.messages[0].ts - 1790000000) < 1
+
+
+def test_discord_chat_exporter_json():
+    data = {"guild": {"name": "Direct Messages"}, "channel": {"name": "mia"}, "messages": [
+        {"timestamp": "2026-01-05T22:15:00+08:00", "content": "gg", "author": {"name": "mia_", "nickname": "Mia"}},
+        {"timestamp": "2026-01-05T22:16:00+08:00", "content": "rematch?", "author": {"name": "ana"}},
+    ]}
+    [c] = importers.read_export("dm.json", io.BytesIO(json.dumps(data).encode()))
+    assert c.platform == "discord" and c.title == "mia"
+    assert [(m.sender, m.text) for m in c.messages] == [("Mia", "gg"), ("ana", "rematch?")]
+
+
+LINE_TXT = "[LINE] Chat history with Mia\nSaved on: 2024/01/06 10:00\n\n2024/01/05(Fri)\n22:15\tMia\thello\n22:16\tAna\thi po\nkamusta\n22:17\tMia\t[Sticker]\n"
+
+
+def test_line_txt():
+    [c] = importers.read_export("chat.txt", io.BytesIO(LINE_TXT.encode()))
+    assert c.platform == "line" and c.title == "Mia"
+    assert [(m.sender, m.text) for m in c.messages][:2] == [("Mia", "hello"), ("Ana", "hi po\nkamusta")]
+
+
+def test_file_name_doesnt_matter():
+    [c] = importers.read_export("notes from phone.dat", io.BytesIO(WA_IPHONE.encode()))
+    assert c.platform == "whatsapp" and len(c.messages) == 4

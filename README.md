@@ -1,11 +1,12 @@
 # imy (I Miss You)
 
 Teach an app how someone writes, then chat with that style again.
-Everything runs on your own computer. No Claude or other cloud API is used.
+It runs on your own computer, or on a server once deployed. With a free Groq key, an AI helps with
+replies the trained data can't handle (see **Smart replies** below); without one, nothing leaves the machine.
 
 **Two modes**
 - **Training:** 4 quick basics, then add chats (import a chat export, upload screenshots or paste text), check what was read, then "Get to know them": one question per screen (confirm what imy noticed, this-or-that taps, "how would they reply?", little details). Questions live in `backend/questions.json`; "how would they reply?" answers become training examples the engine uses first.
-- **Chat:** pick a person and talk. Replies come from their *real* past messages, matched to what you say and shaped by their style.
+- **Chat:** pick a person and talk. The chat looks like the app you talk in (Messenger, iMessage, Instagram, WhatsApp, Telegram or Viber, light or dark, even your own bubble colours, all copied from your screenshots), and they "read" and "type" like a real person: "ok" comes back in a second or two, a paragraph takes as long as typing it would.
 
 ---
 
@@ -53,13 +54,15 @@ pytest backend/tests -q
 ## Getting good results
 
 1. **Put your own messages on the right.** That's how the parser decides who is who. Use "Swap sides" in the review step if a screenshot is the other way round.
-2. **Use full-width, uncropped, high-resolution screenshots.** Light or dark mode is fine.
+2. **Use full-width, uncropped, high-resolution screenshots.** Light or dark mode is fine. imy recognises the app (Messenger, iMessage, Instagram, WhatsApp, Telegram, Viber), skips the header, pinned messages, quoted replies and the message box, keeps only the person's messages in group chats, and warns you if a screenshot is from a chat with someone else.
 3. **Always do the Review step.** OCR is never perfect; fix wrong speakers and typos there. This is the biggest accuracy gain.
 4. **Import a chat export when you can (best).** In the Screenshots step, use **Import a chat export** with the file the app itself gives you. It's exact (no OCR), keeps emojis, and usually has thousands of messages. Supported, all read by `backend/importers.py`:
    - **WhatsApp:** chat > Export chat > Without media (`.zip` or `.txt`)
-   - **Messenger:** facebook.com/dyi > Messages > Format **JSON** (`.zip`, or one `message_1.json`). Newer end-to-end encrypted chats are a separate download (messenger.com > Privacy & safety > End-to-end encrypted chats > Message storage)
-   - **Instagram:** Download your information > Messages > **JSON**
-   - **Telegram Desktop:** Export chat history > **JSON** (`result.json`)
+   - **Messenger:** facebook.com/dyi > Messages > Format **JSON** or HTML (`.zip`, or one `message_1.json`). Newer end-to-end encrypted chats are a separate download (messenger.com > Privacy & safety > End-to-end encrypted chats > Message storage)
+   - **Instagram:** Download your information > Messages > **JSON** or HTML
+   - **Telegram Desktop:** Export chat history (`messages.html` or `result.json`)
+   - **LINE:** Export chat history (`.txt`); **Discord:** DiscordChatExporter JSON
+   - Files are recognised by what's inside, not their name, and Facebook/Instagram downloads in HTML work too. The chat whose name matches the person is listed first and picked for you.
 
    The chat is split into separate "talks" wherever there were 6+ hours of silence (`SESSION_GAP_HOURS` in `importers.py`). With a big import, try `IMY_REUSE_LINES=1` so replies can be their real lines.
    Pasting `Name: message` lines also still works.
@@ -67,42 +70,82 @@ pytest backend/tests -q
 
 ## How a reply is made (`backend/engine.py`)
 
-1. **Embed** your message into a vector.
-2. **Retrieve** the most similar thing *you* said in the screenshots, and reuse what they actually answered.
-3. **Intents** (greeting, "miss you", goodnight, thanks...) use their own matching messages, or a small template shaped by their style, when retrieval isn't confident.
-4. **Fallback** when nothing fits: after a plain remark, one of their short all-purpose replies ("hahaha", "oo", "true"). After a question, an opinion request, or good/bad news, `backend/personality.py` composes a fitting reply from the interview answers (Q6-Q10, Q14-Q15) and their writing style.
-5. **Optional:** tick *Use a local model* in "How they write" and, if [Ollama](https://ollama.com) is running (`ollama pull llama3.2`), a local LLM writes the reply using retrieved examples, the interview answers and the style summary. Change the model with `OLLAMA_MODEL`.
+1. **What you taught it** comes first, word for word: "how would they reply?" answers from the interview, and 👍 / **Fix** in the chat.
+2. **Simple moments** (hi, haha, goodnight, thanks...) are answered locally from their style (`smalltalk.py`), in their casing, Taglish, endearments and emojis.
+3. **Everything else** goes to the free AI (if a key is set, see below), which writes the reply *as them*: it gets their measured style, a spread of their real messages and the most similar real back-and-forths. It can actually answer questions and give advice, still in their voice.
+4. **No key, no internet, or the free limit reached:** imy's own reply from `smalltalk.py` / `personality.py`. Nothing breaks.
 
-6. **Optional Claude mode** (`backend/claude.py`): put `ANTHROPIC_API_KEY=sk-ant-...` in a `.env` file in the project root (or set it in your shell) and restart. Claude then reads screenshots directly (platform, who said what, emojis included) instead of Tesseract, and writes replies in the person's voice from the interview answers, style summary and full parsed chat history. If a call fails, imy falls back to the steps above. Costs money per use, and **your screenshots, messages and answers are sent to Anthropic**. Set `IMY_CLAUDE=0` to switch it off without removing the key; `IMY_CLAUDE_MODEL` changes the model.
+Every reply can show a **"why this reply?"** link (turn it on in *How they write*).
 
-7. **Free AI mode** (`backend/llm.py`): put a free `GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)) or `GROQ_API_KEY` ([get one](https://console.groq.com/keys)) in `.env` and restart. An AI model then writes each reply in context, in the person's style. imy picks an available model by itself (`IMY_LLM_MODEL` overrides it; `IMY_LLM=0` switches it off). Screenshots are still read locally. **Your messages, answers and parsed chats are sent to that provider.** If the call fails or the free limit is hit, imy falls back to the offline replies.
+## Smart replies (free)
 
-Without any key, replies come from `backend/smalltalk.py` (topic rules) and `backend/personality.py`; the screenshots are used only to learn the person's style, never as a script (`IMY_REUSE_LINES=1` brings back the old answer-with-their-own-lines behaviour described in steps 1-4).
+1. Get a free key at https://console.groq.com/keys (sign in, *Create API Key*, copy it).
+2. In the imy folder, copy `.env.example` to `.env` and paste the key after `GROQ_API_KEY=`.
+3. Restart imy. The terminal says `AI brain on: groq`.
 
-Every reply has a **"why this reply?"** link showing which step produced it.
+**Why Groq and not Gemini by default:** Groq is free, answers in about a second, and by default doesn't keep what you send.
+Google's *free* Gemini tier says not to send personal information, may let people read what's sent, and can't be used for
+users in Europe or the UK. imy sends chat messages, so only use Gemini with billing turned on (then add `GEMINI_API_KEY`
+and `IMY_GEMINI_PAID=1`). With both keys, Groq is used first and Gemini takes over when Groq's free limit is hit.
+
+Free limits are shared by everyone using your copy of imy (a few hundred AI replies a day on Groq's free plan). imy only uses
+the AI when its own data isn't enough, rests a model for a minute when its limit is hit, and falls back to its own replies.
+For a big public launch you'll want a paid plan (Groq's is inexpensive). `IMY_AI_MODE=always` uses the AI for every reply.
+
+Optional, still supported: a local model with Ollama (*How they write* > "Use a local model"), and Claude (`ANTHROPIC_API_KEY`,
+paid; it also reads screenshots).
 
 ## Where to tweak things
 
 | I want to... | Edit |
 |---|---|
-| Change the 21 questions | `backend/questions.json` (no code changes needed) |
+| Change the interview questions | `backend/questions.json` (no code changes needed) |
+| Change how fast they "type" | `typingMs` / `readMs` at the top of `frontend/src/components/Chat.jsx` |
+| Change an app's look | its `.skin-<app>` block in `frontend/src/styles.css`; its behaviour (receipts, "typing…") in `frontend/src/platforms.js` |
+| Teach imy to recognise an app in screenshots | `PALETTES` and `HINTS` in `backend/looks.py` |
+| Change what the AI is told | `ai_prompt` in `backend/engine.py` |
 | Change what the no-match replies say or how they're chosen | `BANKS`, `TRAIT_PATTERNS` in `backend/personality.py` |
 | Make matching stricter or looser | `THRESHOLDS` in `backend/engine.py` |
 | Add phrases like "goodnight" that get special handling | `INTENTS`, `TEMPLATES` in `backend/engine.py` |
 | Change how style is measured | `backend/style.py` |
-| Improve who-said-what detection | `backend/parser.py` (`classify_side`, `group_bubbles`) |
+| Improve who-said-what detection | `backend/parser.py` (`parse_screen`, `bubble_side`) and `backend/ocr.py` |
 | Support another language better | `IMY_MODEL=paraphrase-multilingual-MiniLM-L12-v2`; add Tesseract language packs and set the `lang` in `ocr.py` |
 | Re-theme | the variables at the top of `frontend/src/styles.css` |
 
 ## Project layout
 ```
-backend/   main.py (API)  db.py (SQLite)  ocr.py  parser.py  style.py  personality.py  engine.py  questions.json  tests/
-frontend/  src/App.jsx  src/components/{Sidebar,Trainer,Chat}.jsx  src/styles.css  dist/ (built)
+backend/   main.py (API)  db.py (SQLite)  ocr.py + parser.py + looks.py (screenshots)  importers.py (chat files)
+           engine.py + smalltalk.py + personality.py + style.py (replies)  llm.py (free AI)  questions.json  tests/
+frontend/  src/App.jsx  src/components/{Sidebar,Trainer,TrainPanel,Chat,ErrorBoundary}.jsx  src/platforms.js  src/styles.css  dist/ (built)
 data/      created on first run: imy.db + uploaded screenshots
 ```
 
+## Deploying
+
+The `Dockerfile` packs everything (API, website, Tesseract) into one container:
+
+```bash
+docker build -t imy .
+docker run -p 8000:8000 -v imy-data:/data --env-file .env imy
+```
+
+Any host that runs Docker works (Render, Railway, Fly.io, a small VPS). Give it a **persistent disk mounted at `/data`**
+(database + screenshots), set the variables from `.env.example` in the host's settings (never upload `.env` itself), and
+point its health check at `/api/health`. The container uses the lighter TF-IDF matcher, so ~512 MB of memory is enough.
+
+Built to stay up: short database locks (uploads and chats never block each other), one bad screenshot doesn't fail a batch,
+a failed reply falls back to a simpler one, every error comes back as a friendly message, a broken screen shows "Try again"
+instead of a blank page, and the website reconnects by itself if the server restarts. There's a per-visitor speed limit too.
+
+### Before you open it to the public
+- **Accounts.** Right now everyone who opens the site sees every person set up in it, which is fine on your own laptop and
+  not fine on the internet. Add sign-in (each user sees only their own people) before sharing the link.
+- **HTTPS** (most hosts give you this) and **backups** of `/data`.
+- **A privacy page**: what's stored, that replies may be written by Groq (or Gemini), and how to delete everything (Delete in the chat menu).
+- **Ages:** the AI providers' terms are for adults; make imy 18+.
+
 ## Known limits
-- **Replies are retrieved, not invented.** They sound like the person because they *are* the person's words, but they can be off-topic when nothing in the screenshots is close. The local-LLM option is the way to get more fluent, novel replies.
-- **OCR can't read emojis** and can misread stylised fonts, so use pasted text for emoji-heavy chats.
-- **Speaker detection is heuristic** (bubble side, bubble colour, names above messages). Group chats and unusual themes may need corrections in the Review step.
-- Your chats and screenshots stay on your machine unless you turn on Claude mode (step 6 above). The page loads two Google Fonts from the internet, and the embedding model is downloaded once from Hugging Face.
+- **Without a key, replies are pattern-based**: they sound like the person but can be generic when nothing fits. With a key they understand context.
+- **OCR can't read emojis** and can misread stylised fonts, so use a chat export file for emoji-heavy chats.
+- **Speaker detection is heuristic** (bubble side and colour, names above messages). Unusual themes may need corrections in Review.
+- The page loads two Google Fonts from the internet, and the optional sentence-transformers model is downloaded once from Hugging Face.

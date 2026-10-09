@@ -9,6 +9,7 @@ the normal pass, but easy once inverted. Lines found only in the second pass
 are merged in.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -21,6 +22,12 @@ if os.environ.get("TESSERACT_CMD"):  # needed on Windows if tesseract isn't on P
     pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
 
 DUAL_PASS = os.environ.get("IMY_OCR_DUAL", "1") != "0"
+OCR_LANG = os.environ.get("IMY_OCR_LANG", "eng")      # e.g. "eng+tgl" if the Tagalog language pack is installed
+OCR_TIMEOUT = int(os.environ.get("IMY_OCR_TIMEOUT", "40"))   # seconds per Tesseract call; a stuck call is skipped
+MAX_PIXELS = 24_000_000
+# Tesseract runs as a separate program, so several bubbles can be read at the same time.
+OCR_THREADS = max(1, int(os.environ.get("IMY_OCR_THREADS", min(4, os.cpu_count() or 1))))
+_POOL = ThreadPoolExecutor(max_workers=OCR_THREADS, thread_name_prefix="imy-ocr")
 TesseractNotFoundError = pytesseract.TesseractNotFoundError
 
 
@@ -45,7 +52,11 @@ class Line:
 def prepare(img: Image.Image) -> Image.Image:
     """Normalise orientation/colour and scale to a size Tesseract likes."""
     img = ImageOps.exif_transpose(img).convert("RGB")
-    w, _ = img.size
+    w, h = img.size
+    if w * h > MAX_PIXELS:   # a very long scrolling capture: shrink it so reading stays fast and memory-safe
+        f = (MAX_PIXELS / (w * h)) ** 0.5
+        img = img.resize((max(1, int(w * f)), max(1, int(h * f))), Image.LANCZOS)
+        w, h = img.size
     if w < 1000:
         img = img.resize((1000, int(img.height * 1000 / w)), Image.LANCZOS)
     elif w > 2200:
@@ -54,7 +65,12 @@ def prepare(img: Image.Image) -> Image.Image:
 
 
 def _ocr_lines(gray: Image.Image) -> list[Line]:
-    data = pytesseract.image_to_data(gray, config="--psm 6", output_type=Output.DICT)
+    try:
+        data = pytesseract.image_to_data(gray, lang=OCR_LANG, config="--psm 6", output_type=Output.DICT,
+                                         timeout=OCR_TIMEOUT)
+    except RuntimeError as exc:          # pytesseract raises RuntimeError when the timeout is hit
+        print(f"[imy] OCR skipped part of an image: {exc}")
+        return []
     groups: dict[tuple, list[dict]] = {}
     for i, raw in enumerate(data["text"]):
         text = raw.strip()
@@ -156,9 +172,10 @@ def extract_lines(img: Image.Image):
     """Returns (lines, (width, height), rgb_array) for the prepared image."""
     img = prepare(img)
     gray = ImageOps.autocontrast(img.convert("L"))
+    inverted = _POOL.submit(_ocr_lines, ImageOps.invert(gray)) if DUAL_PASS else None   # both passes at once
     lines = _ocr_lines(gray)
-    if DUAL_PASS:
-        for extra in _ocr_lines(ImageOps.invert(gray)):
+    if inverted is not None:
+        for extra in inverted.result():
             if extra.conf >= 60 and not any(_overlap(extra, l) > 0.3 for l in lines):
                 lines.append(extra)
     rgb = np.asarray(img)
@@ -221,6 +238,8 @@ class Screen:
     top: int             # chat area: y where messages start
     bottom: int          #            y where the message box begins
     bubbles: list        # Regions, top to bottom
+    bg: tuple = (255, 255, 255)   # the chat background colour
+    avatars: list = None          # small round shapes at the left edge (profile pictures beside messages)
 
 
 def _background(rgb: np.ndarray) -> np.ndarray:
@@ -259,8 +278,9 @@ def chat_area(rgb: np.ndarray, lines: list, person_names=()) -> tuple[int, int]:
     return top, max(bottom, top + 1)
 
 
-def find_bubbles(rgb: np.ndarray, top: int, bottom: int) -> list[Region]:
-    """Solid-coloured shapes inside the chat area that look like message bubbles."""
+def find_bubbles(rgb: np.ndarray, top: int, bottom: int, avatars: list | None = None) -> list[Region]:
+    """Solid-coloured shapes inside the chat area that look like message bubbles.
+    Profile pictures found at the left edge are added to `avatars` (if a list is given)."""
     H, W = rgb.shape[:2]
     step = 2
     bg = _background(rgb)
@@ -280,6 +300,8 @@ def find_bubbles(rgb: np.ndarray, top: int, bottom: int) -> list[Region]:
             continue
         squareish = abs(w - h) < 0.3 * max(w, h) and w < 0.15 * W
         if squareish and (x0 < 0.08 * W or abs((x0 + x1) / 2 - W / 2) < 0.1 * W or w < 0.09 * W):
+            if avatars is not None and x0 < 0.08 * W and w >= 0.04 * W:
+                avatars.append((x0, y0, x1, y1))
             continue                                                       # avatars, the scroll-down button, icons
         # Stacked bubbles sit only a few pixels apart and can be found as one shape: split at background rows.
         cover = full[y0:y1, x0:x1].mean(axis=1)
@@ -327,7 +349,9 @@ def read_screen(img: Image.Image, person_names=()) -> Screen:
     """Full screen-aware read: lines everywhere, plus each bubble read on its own."""
     lines, size, rgb = extract_lines(img)
     top, bottom = chat_area(rgb, lines, person_names)
-    bubbles = find_bubbles(rgb, top, bottom)
-    for r in bubbles:
-        r.lines = read_bubble(rgb, r)
-    return Screen(lines, size, rgb, top, bottom, [r for r in bubbles if r.text.strip()])
+    avatars: list = []
+    bubbles = find_bubbles(rgb, top, bottom, avatars)
+    for r, found in zip(bubbles, _POOL.map(lambda r: read_bubble(rgb, r), bubbles)):
+        r.lines = found
+    bg = tuple(int(v) for v in _background(rgb))
+    return Screen(lines, size, rgb, top, bottom, [r for r in bubbles if r.text.strip()], bg, avatars)
