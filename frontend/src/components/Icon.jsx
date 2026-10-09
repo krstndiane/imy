@@ -14,6 +14,12 @@ const PATHS = {
   like: <path d="M7 11v9H4v-9zM7 11l4-7.500a2 2 0 0 1 2.500 2L13 9.500h5.500a2 2 0 0 1 2 2.400l-1.300 6.500a2 2 0 0 1-2 1.600H7" />,
   send: <path d="M4 12L20.500 4l-4 16-4.500-6.500zM12 13.500L20.500 4" />,
   up: <path d="M12 19V6M6.500 11.500L12 6l5.500 5.500" />,
+  reply: <path d="M9 7L4 12l5 5M4 12h9a7 7 0 0 1 7 7v1" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="M15.8 15.8l4.7 4.7" /></>,
+  file: <><path d="M13 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.5z" /><path d="M13 3.5v6h6" /></>,
+  play: <><circle cx="12" cy="12" r="9" /><path d="M10 8.5l6 3.5-6 3.5z" /></>,
+  trash: <path d="M5 7h14M10 7V5h4v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12" />,
 };
 
 export default function Icon({ name }) {

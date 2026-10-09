@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import claude, llm, parser, personality, smalltalk, style as style_mod
+from . import claude, llm, notes, parser, personality, smalltalk, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
@@ -448,10 +448,19 @@ class PersonIndex:
         step = len(good) / n
         return [good[int(i * step)] for i in range(n)]
 
-    def ai_prompt(self, user_text: str, history: list[dict]) -> str:
+    def ai_prompt(self, user_text: str, history: list[dict], shared: list[str] | None = None) -> str:
         labels = _question_labels()
         name = self.name
         nick = (self.answers.get("q2") or "").strip()
+        # Nicknames set in the chat (Messenger-style) and the notes imy keeps from your conversations.
+        nick_them = (self.person.get("nick_them") or "").strip()
+        nick_me = (self.person.get("nick_me") or "").strip()
+        remembered = notes.as_text(self.person.get("memory") or "")
+        naming = "".join([
+            f"\n- They saved your name in this chat as “{nick_them}”. Signing off or calling yourself that is normal." if nick_them else "",
+            f"\n- You call them “{nick_me}”. Use it the way you'd use any nickname: sometimes, not every message." if nick_me else "",
+        ])
+        seen = "\n".join(f"- {s}" for s in (shared or []))
         facts = "\n".join(f"- {labels[k]} {v.strip()}" for k, v in self.answers.items()
                           if v and v.strip() and k in labels and k not in ("q1",))[:1800]
         style = "\n".join("- " + s for s in style_mod.describe_style(self.style))
@@ -468,11 +477,13 @@ class PersonIndex:
         return f"""You are {name}{f' ("{nick}")' if nick else ''}, texting someone close to you on {platform}. Stay {name} for the whole chat.
 
 ABOUT {name.upper()} (from the person you're texting):
-{facts or '(nothing given)'}
+{facts or '(nothing given)'}{naming}
 
 HOW {name.upper()} TEXTS:
 {style or '(not measured yet)'}
 {('Never says: ' + ', '.join(never)) if never else ''}
+{('WHAT YOU ALREADY KNOW FROM THIS CHAT (remember it; bring it up when it fits):' + chr(10) + remembered) if remembered else ''}
+{('THEY JUST SENT YOU THIS - react to it, you can see it:' + chr(10) + seen) if seen else ''}
 
 {name.upper()}'S REAL MESSAGES (copy this voice; don't paste them unless one fits perfectly):
 {samples}
@@ -488,10 +499,25 @@ RULES
 - Be kind. Don't copy rude, toxic or manipulative behaviour even if it's in the old messages. If they sound like they're in real danger or thinking of hurting themselves, be gentle and caring and encourage them to reach out to someone they trust or a local hotline (in the Philippines: NCMH 1553).
 - Output only {name}'s message. To send several bubbles, put each on its own line (max {MAX_BUBBLES})."""
 
-    def ai_reply(self, user_text: str, history: list[dict]) -> Reply:
-        bubbles = llm.chat(self.ai_prompt(user_text, history), history, user_text, MAX_BUBBLES, self.name)
-        return Reply(bubbles, "ai", 0.0, None, detect_intent(user_text), note=f"Written by {llm.label()} in their style.",
+    def ai_reply(self, user_text: str, history: list[dict], shared: list[str] | None = None) -> Reply:
+        asked = user_text if not shared else (user_text or "").strip() or "(sent a photo)"
+        bubbles = llm.chat(self.ai_prompt(user_text, history, shared), history, asked, MAX_BUBBLES, self.name)
+        return Reply(bubbles, "ai", 0.0, None, detect_intent(user_text),
+                     note=("Written by " + llm.label() + (" after looking at what you sent." if shared else " in their style.")),
                      embedder=self.space.kind)
+
+    # ---- someone just shared a photo and there's no AI available
+    def media_reply(self, shared: list[str], rng: random.Random) -> Reply:
+        """Their own short reactions, so a photo still gets a human answer without any AI."""
+        pool = [t for t in self.person_texts if 1 <= len(t.split()) <= 5 and _usable_filler(t)]
+        looks_like = " ".join(shared).lower()
+        if "screenshot" in looks_like:
+            lines = ["ano to", "sino to", "wait ano nangyari", "what's this"]
+        else:
+            lines = ["ganda", "cute", "aw", "nice", "grabe", "ang ganda", "omg"]
+        bubble = rng.choice(pool) if pool and rng.random() < 0.6 else rng.choice(lines)
+        return Reply([bubble], "media", 0.0, None, None, embedder=self.space.kind,
+                     note="They reacted to what you sent. Add a free AI key and they'll say what they see in it.")
 
     # ---- optional Claude API (see claude.py)
     def claude_reply(self, user_text: str, history: list[dict], use: str = "claude") -> Reply:
@@ -508,20 +534,32 @@ RULES
 
 
 # ------------------------------------------------------------------ cache + public API
+# Working out how someone writes takes about 40ms and roughly 0.4 MB of memory, so imy keeps the
+# result and reuses it: a reply from someone already in here takes about 9ms instead.
+#
+# The number to keep is really "how many different people might be mid-conversation at once". Too
+# few and busy times push each other out, and everyone pays the 40ms again; too many and the memory
+# adds up. 200 is about 75 MB, which is comfortable on a small server and covers far more people
+# chatting at once than one copy of imy can serve anyway.
 _CACHE: "OrderedDict[int, tuple[int, str, PersonIndex]]" = OrderedDict()
-CACHE_SIZE = int(os.environ.get("IMY_CACHE_PEOPLE", "64"))
+CACHE_SIZE = int(os.environ.get("IMY_CACHE_PEOPLE", "200"))
 _cache_lock = threading.Lock()
 
 
-def get_index(person: dict, messages: list[dict]) -> PersonIndex:
-    """Build the index once per version of the person's data, then reuse it (newest 64 people kept)."""
+def get_index(person: dict, messages) -> PersonIndex:
+    """Build the index once per version of the person's data, then reuse it.
+
+    `messages` can be a list, or a function returning one. Pass a function and their training
+    messages are only read from the database when the index genuinely has to be rebuilt. Reading
+    thousands of messages on every reply, only to throw them away because the index was already
+    cached, is pure waste once a lot of people are chatting."""
     kind = VectorSpace.kind_now()
     with _cache_lock:
         cached = _CACHE.get(person["id"])
         if cached and cached[0] == person["data_version"] and cached[1] == kind:
             _CACHE.move_to_end(person["id"])
             return cached[2]
-    index = PersonIndex(person, messages)
+    index = PersonIndex(person, messages() if callable(messages) else messages)
     with _cache_lock:
         _CACHE[person["id"]] = (person["data_version"], index.space.kind, index)
         _CACHE.move_to_end(person["id"])
@@ -567,10 +605,20 @@ def local_reply(index: PersonIndex, user_text: str, history: list[dict], seed: i
     return reply
 
 
-def generate_reply(person: dict, messages: list[dict], history: list[dict], user_text: str) -> Reply:
+def generate_reply(person: dict, messages: list[dict], history: list[dict], user_text: str,
+                   shared: list[str] | None = None) -> Reply:
+    """`shared`: what the person just sent as a photo or file, already put into words (see media.py).
+    When there is one, the reply has to be about it, so it goes straight to the AI."""
     index = get_index(person, messages)
     seed = int(hashlib.md5(f"{user_text}|{len(history)}".encode()).hexdigest(), 16) % (2 ** 32)
     note = None
+    if shared:
+        if llm.enabled():
+            try:
+                return index.ai_reply(user_text, history, shared)
+            except Exception as exc:
+                print(f"[imy] reply to a shared photo failed: {exc}")
+        return index.media_reply(shared, random.Random(seed))
     if claude.enabled():
         try:
             return index.claude_reply(user_text, history)

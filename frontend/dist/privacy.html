@@ -1,0 +1,157 @@
+<!doctype html>
+<!-- BEFORE YOU PUBLISH: put your real contact email in the "Getting in touch" section below. -->
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy — IMY</title>
+  <meta name="description" content="What imy stores, who can see it, and how to delete it." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <!-- Styled on its own, with no CDN: a page explaining what happens to people's data has to stay
+       readable even when an outside script can't load. -->
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0a0a0c; color: #e7ecf3; overflow-x: hidden;
+           font-family: Inter, 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+           -webkit-font-smoothing: antialiased; }
+    a { color: #60a5fa; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+    .ambient { position: fixed; border-radius: 50%; background: #0052FF; filter: blur(120px); opacity: .2;
+               pointer-events: none; width: 520px; height: 520px; top: -200px; left: -140px; z-index: 0; }
+    header { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid rgba(255,255,255,.08);
+             background: rgba(10,10,12,.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    header .wrap { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; padding-bottom: 14px; }
+    .brandmark { font-size: 1.1rem; font-weight: 800; letter-spacing: -.02em; color: #fff; text-decoration: none; }
+    .openlink { font-size: .88rem; color: #94A3B8; text-decoration: none; }
+    .openlink:hover { color: #fff; }
+    main { position: relative; z-index: 1; padding: 44px 0 20px; }
+    h1 { font-size: clamp(2rem, 6vw, 2.6rem); font-weight: 800; letter-spacing: -.025em; margin: 0 0 .2rem; color: #fff; }
+    .stamp { color: #94A3B8; margin: 0 0 1.6rem; }
+    .card { background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09);
+            border-radius: 16px; padding: 18px 20px; }
+    .card p { color: #fff; margin: 0; }
+    h2 { font-size: 1.3rem; font-weight: 700; color: #fff; margin: 2.4rem 0 .5rem; letter-spacing: -.01em; }
+    p, li { color: #cbd5e1; line-height: 1.68; }
+    p { margin: .6rem 0; }
+    ul { margin: .6rem 0; padding-left: 1.25rem; }
+    li { margin: .35rem 0; }
+    strong { color: #fff; }
+    .contact { display: inline-block; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09);
+               border-radius: 12px; padding: 10px 16px; }
+    footer { border-top: 1px solid rgba(255,255,255,.08); margin-top: 48px; position: relative; z-index: 1; }
+    footer .wrap { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+                   padding-top: 26px; padding-bottom: 26px; font-size: .88rem; color: #94A3B8; }
+    footer a { color: #94A3B8; text-decoration: none; }
+    footer a:hover { color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+
+  <header>
+    <div class="wrap">
+      <a href="/landing.html" class="brandmark">IMY</a>
+      <a href="/" class="openlink">Open imy →</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1>Privacy</h1>
+    <p class="stamp">Last updated: 9 October 2026</p>
+
+    <div class="card">
+      <p><strong>The short version.</strong> imy keeps the chats you upload so it can
+      learn how someone writes. Only your account can see them. The text needed to write a reply is sent to an
+      AI company to produce that reply. You can delete any person, or your whole account and everything in it,
+      at any time, and it's really gone. imy is for people aged 18 and over.</p>
+    </div>
+
+    <h2>What imy stores</h2>
+    <p>When you use imy, this is kept on the server:</p>
+    <ul>
+      <li><strong>Your account:</strong> your email address and a scrambled version of your password. The password
+        itself is never stored, so nobody — including whoever runs imy — can read it.</li>
+      <li><strong>The people you set up:</strong> the name and nickname you give them, your answers to the
+        interview questions, and the profile pictures you choose.</li>
+      <li><strong>What you upload:</strong> screenshots and chat export files, and the messages imy reads out of
+        them. The original files are kept so imy can read them again if it gets better at it.</li>
+      <li><strong>Your conversations in imy:</strong> what you send, what the person replies, reactions, and the
+        photos and files you share in a chat.</li>
+      <li><strong>Short notes imy keeps</strong> from your conversations — things like a date you mentioned —
+        so replies can refer back to them. You can read and clear these in the chat menu.</li>
+      <li><strong>One cookie</strong> that keeps you signed in. That's the only cookie. There is no advertising,
+        no analytics and no tracking of any kind.</li>
+    </ul>
+
+    <h2>Who can see it</h2>
+    <p>Only you, from your account. Every person you set up belongs to that account, and no other account can
+    open them, read their messages or load their photos. Whoever runs this copy of imy has access to the server
+    it runs on, which is true of every website.</p>
+
+    <h2>The AI that writes the replies</h2>
+    <p>imy can answer on its own from patterns in the messages you uploaded. When a reply needs real
+    understanding, it asks an outside AI service — <a href="https://groq.com" rel="noreferrer">Groq</a>, and
+    optionally Google's Gemini if that's been set up. What gets sent is only what's needed for that one reply:</p>
+    <ul>
+      <li>a description of how the person writes, and a sample of their real messages;</li>
+      <li>the last few messages of your conversation;</li>
+      <li>a photo you share in a chat, so the reply can be about the photo.</li>
+    </ul>
+    <p>Your email address, your password and your uploaded screenshot <em>images</em> are never sent. Groq states
+    that it does not use data sent through its API to train its models. If Gemini has been switched on by whoever
+    runs this site, Google's terms for the plan in use apply.</p>
+
+    <h2>Deleting things</h2>
+    <ul>
+      <li><strong>One person:</strong> open their chat, then the menu → Delete. Their messages, screenshots and
+        shared photos go with them.</li>
+      <li><strong>One conversation:</strong> the chat menu → Clear chat.</li>
+      <li><strong>What they remember:</strong> the chat menu → What they remember → Forget everything.</li>
+      <li><strong>Everything:</strong> your account menu → Delete everything. This removes your account, every
+        person, every message and every uploaded file from the server. It cannot be undone.</li>
+    </ul>
+    <p>Deleted means deleted — not hidden. Backups made before a deletion may still hold the data for a short
+    time until they age out.</p>
+
+    <h2>The person you're copying</h2>
+    <p>This matters more than anything else on this page. imy learns from conversations involving a real person
+    who isn't here to agree to it.</p>
+    <ul>
+      <li>Only upload chats you were actually part of.</li>
+      <li>Don't use imy to impersonate someone to other people, or to pass its replies off as really theirs.</li>
+      <li>imy writes in someone's style. It is not them, it doesn't know what they'd really say, and it should
+        never be treated as their words.</li>
+      <li>If you are the person someone has copied and you want that removed, get in touch below and it will
+        be deleted.</li>
+    </ul>
+
+    <h2>Age</h2>
+    <p>imy is for people aged 18 and over, which you confirm when you make an account. The AI services it relies
+    on set that limit in their own terms.</p>
+
+    <h2>Looking after yourself</h2>
+    <p>imy can be a kind thing — a way to keep a voice close when someone is far away. It can also make a loss
+    harder to sit with. If talking to it starts to hurt more than it helps, that's a good reason to step away for
+    a while, and to talk to someone you trust. In the Philippines, the National Center for Mental Health crisis
+    line is <strong>1553</strong>, free from landlines and most mobile networks.</p>
+
+    <h2>Getting in touch</h2>
+    <p>For anything on this page — a question, a deletion request, or a complaint:</p>
+    <p class="contact"><strong>[Add your contact email here before you publish
+    this page.]</strong></p>
+
+    <h2>Changes</h2>
+    <p>If what imy stores or sends changes, this page changes with it, and the date at the top is updated.</p>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>© <span id="year"></span> IMY. Preserving your peace of mind.</p>
+      <a href="/landing.html">Back to the homepage</a>
+    </div>
+  </footer>
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

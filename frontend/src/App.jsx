@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, whenSignedOut } from "./api";
 import { load, save } from "./storage";
 import Sidebar from "./components/Sidebar";
 import Trainer from "./components/Trainer";
 import Chat from "./components/Chat";
+import Auth from "./components/Auth";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-/* App: owns the list of people and decides which screen to show.
-     mode "chat"  -> Chat Mode with the selected person
-     mode "train" -> Training Mode (trainId = null means "creating someone new")
+/* App: works out who's signed in, owns the list of people, and decides which screen to show.
+     nobody signed in -> the sign-in page
+     mode "chat"      -> Chat Mode with the selected person
+     mode "train"     -> Training Mode (trainId = null means "creating someone new")
    If the server can't be reached it keeps retrying quietly and shows "Reconnecting…" meanwhile. */
 export default function App() {
+  const [user, setUser] = useState(undefined);   // undefined = still asking, null = signed out
   const [persons, setPersons] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [mode, setMode] = useState("chat");
@@ -30,20 +33,39 @@ export default function App() {
       const list = await api.persons();
       setPersons(Array.isArray(list) ? list : []);
       setOffline(false);
-    } catch {
+    } catch (e) {
+      if (/sign in/i.test(e.message)) return;      // the session ended; the sign-in page is coming
       setOffline(true);
       retry.current = setTimeout(refresh, 4000);   // try again by itself; no need to reload the page
     }
   }, []);
 
+  // Any request coming back "not signed in" drops the whole app back to the sign-in page,
+  // rather than leaving a half-working screen behind.
+  const signedOut = useCallback(() => {
+    clearTimeout(retry.current);
+    setUser(null); setPersons([]); setActiveId(null); setMode("chat"); setOffline(false);
+  }, []);
+
+  useEffect(() => { whenSignedOut(signedOut); }, [signedOut]);
+
   useEffect(() => {
+    let gone = false;
+    api.me()
+      .then((r) => !gone && setUser(r.user))
+      .catch(() => !gone && setUser(null));        // can't reach imy: show sign-in rather than a blank page
+    const quiet = (e) => console.warn("[imy] unhandled:", e.reason);   // a stray failed request must not break the page
+    window.addEventListener("unhandledrejection", quiet);
+    return () => { gone = true; window.removeEventListener("unhandledrejection", quiet); };
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     refresh();
     const back = () => refresh();
     window.addEventListener("online", back);
-    const quiet = (e) => console.warn("[imy] unhandled:", e.reason);   // a stray failed request must not break the page
-    window.addEventListener("unhandledrejection", quiet);
-    return () => { window.removeEventListener("online", back); window.removeEventListener("unhandledrejection", quiet); clearTimeout(retry.current); };
-  }, [refresh]);
+    return () => { window.removeEventListener("online", back); clearTimeout(retry.current); };
+  }, [user, refresh]);
 
   const active = persons.find((p) => p.id === activeId) || null;
 
@@ -55,6 +77,10 @@ export default function App() {
     refresh();
   };
 
+  // Still asking the server who's signed in: nothing yet, so the page doesn't flash the wrong screen.
+  if (user === undefined) return <div className="app booting" aria-busy="true" />;
+  if (!user) return <Auth onSignedIn={setUser} />;
+
   return (
     <div className="app">
       <Sidebar
@@ -64,6 +90,8 @@ export default function App() {
         onNew={() => startTraining(null)}
         theme={theme}
         onTheme={setTheme}
+        user={user}
+        onSignedOut={signedOut}
       />
       <main className="main">
         {offline && <div className="banner warn" role="status">Can’t reach imy right now. Reconnecting…</div>}

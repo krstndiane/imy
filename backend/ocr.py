@@ -189,6 +189,16 @@ def extract_lines(img: Image.Image):
     return lines, img.size, rgb
 
 
+def plain_text(img: Image.Image) -> str:
+    """Every word in a picture, top to bottom. Used when someone shares a screenshot in the chat
+    and no AI is available to look at it. Returns "" if Tesseract isn't installed."""
+    try:
+        lines, _, _ = extract_lines(img)
+    except TesseractNotFoundError:
+        return ""
+    return "\n".join(l.text.strip() for l in lines if l.conf >= 55 and l.text.strip())
+
+
 
 
 # =====================================================================================

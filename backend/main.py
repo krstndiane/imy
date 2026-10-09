@@ -11,6 +11,7 @@ as a friendly message instead of taking the page down.
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import threading
@@ -25,10 +26,11 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from . import claude, engine, importers, llm, looks, ocr, parser, style as style_mod
+from . import auth, backup, claude, engine, importers, llm, looks, media as media_mod, notes, ocr, parser, style as style_mod
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +44,9 @@ Image.MAX_IMAGE_PIXELS = 60_000_000          # refuse absurd images (a "decompre
 @asynccontextmanager
 async def lifespan(_app):
     init_db()
+    auth.sweep_sessions()                    # drop sign-ins that ran out while imy was off
+    auth.start_sweeper()                     # and keep doing it while it runs
+    backup.start_daily()                     # only does anything with IMY_BACKUP_DAILY=1
     engine.VectorSpace.warm_up()             # load the matcher in the background: the first reply isn't slow
     if llm.enabled():
         print(f"[imy] AI brain on: {', '.join(llm.providers())} (mode: {llm.mode()})")
@@ -52,9 +57,38 @@ async def lifespan(_app):
 
 app = FastAPI(title="imy", lifespan=lifespan)
 ORIGINS = [o.strip() for o in os.environ.get("IMY_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+# Pages anyone can reach without signing in. Everything else under /api and every uploaded file
+# needs an account - that's what keeps one person's chats out of another person's browser.
+PUBLIC_PATHS = {"/api/health", "/api/status", "/api/auth/me",
+                "/api/auth/signup", "/api/auth/signin", "/api/auth/signout"}
+
+
+async def identify(request: Request, call_next):
+    """Work out who is asking (from the sign-in cookie) before the request reaches anything else."""
+    user = None
+    try:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if token:
+            user = auth.load_session(token)
+    except Exception:
+        print(f"[imy] couldn't read the sign-in cookie:\n{traceback.format_exc()}")
+    reset = auth.CURRENT.set(user)
+    try:
+        path = request.url.path
+        needs_account = (path.startswith("/api/") and path not in PUBLIC_PATHS) or path.startswith("/uploads/")
+        if needs_account and not user:
+            return JSONResponse({"detail": "Please sign in."}, status_code=401)
+        return await call_next(request)
+    finally:
+        auth.CURRENT.reset(reset)
+
+
+# Added in this order so CORS ends up outermost (Starlette wraps each new one around the last).
+app.add_middleware(BaseHTTPMiddleware, dispatch=identify)
+app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
 
 
 # ---------------------------------------------------------------- never crash
@@ -66,9 +100,31 @@ async def unexpected_error(request: Request, exc: Exception):
 
 
 # A small per-visitor speed limit, so one person (or a bot) can't use up the free AI limit or the CPU.
-LIMITS = {"chat": (40, 60), "upload": (120, 60), "import": (20, 60)}   # (requests, per seconds)
+LIMITS = {"chat": (40, 60), "upload": (120, 60), "import": (20, 60),
+          "auth": (12, 300)}        # sign-in guesses: a dozen tries per 5 minutes, per visitor
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
 _hits_lock = threading.Lock()
+_swept_at = 0.0
+SWEEP_EVERY = 300        # seconds between clear-outs
+
+
+def _forget_quiet_visitors(t: float) -> None:
+    """Drop visitors who haven't been back inside their time window.
+
+    Without this, every address that ever visits is remembered for as long as imy runs - a few
+    hundred bytes each, never given back. That's invisible on a laptop and a slow leak on a busy
+    site. Called with the lock already held, and only every few minutes."""
+    global _swept_at
+    if t - _swept_at < SWEEP_EVERY:
+        return
+    _swept_at = t
+    for key in list(_hits):
+        q = _hits[key]
+        per = LIMITS[key[1]][1]
+        while q and q[0] < t - per:
+            q.popleft()
+        if not q:
+            del _hits[key]
 
 
 def rate_limit(request: Request | None, kind: str) -> None:
@@ -78,6 +134,7 @@ def rate_limit(request: Request | None, kind: str) -> None:
     n, per = LIMITS[kind]
     t = time.time()
     with _hits_lock:
+        _forget_quiet_visitors(t)
         q = _hits[(who, kind)]
         while q and q[0] < t - per:
             q.popleft()
@@ -100,11 +157,158 @@ def status():
     return {"ai": llm.status(), "claude": claude.enabled(), "matcher": engine.VectorSpace.kind_now()}
 
 
-# ---------------------------------------------------------------- helpers
+# ---------------------------------------------------------------- accounts
+class SignUpIn(BaseModel):
+    email: str = ""
+    password: str = ""
+    is_adult: bool = False      # ticked the "I'm 18 or over and I agree to the rules" box
+
+
+class SignInIn(BaseModel):
+    email: str = ""
+    password: str = ""
+
+
+class PasswordIn(BaseModel):
+    old_password: str = ""
+    new_password: str = ""
+
+
+def _signed_in(user: dict, token: str) -> JSONResponse:
+    """Answer with the account, and put the session in a cookie the browser sends back every time.
+    httponly keeps JavaScript (and anything injected into the page) from reading it; samesite=lax
+    stops another website from using it behind your back."""
+    resp = JSONResponse({"user": {"id": user["id"], "email": user["email"]}})
+    resp.set_cookie(auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400,
+                    httponly=True, samesite="lax", secure=auth.secure_cookies(), path="/")
+    return resp
+
+
+@app.post("/api/auth/signup")
+def sign_up(body: SignUpIn, request: Request = None):
+    rate_limit(request, "auth")
+    try:
+        user = auth.create_user(body.email, body.password, body.is_adult)
+    except auth.AuthError as exc:
+        raise HTTPException(400, str(exc))
+    token = auth.start_session(user["id"], request.headers.get("user-agent", "") if request else "")
+    return _signed_in(user, token)
+
+
+@app.post("/api/auth/signin")
+def sign_in(body: SignInIn, request: Request = None):
+    rate_limit(request, "auth")
+    try:
+        user = auth.verify_user(body.email, body.password)
+    except auth.AuthError as exc:
+        raise HTTPException(401, str(exc))
+    token = auth.start_session(user["id"], request.headers.get("user-agent", "") if request else "")
+    return _signed_in(user, token)
+
+
+@app.post("/api/auth/signout")
+def sign_out(request: Request = None):
+    if request:
+        auth.end_session(request.cookies.get(auth.SESSION_COOKIE, ""))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.get("/api/auth/me")
+def who_am_i():
+    """Who's signed in, or nobody. The only protected-looking route that's fine to call signed out,
+    because the website asks it first to decide whether to show the sign-in screen."""
+    me = auth.current()
+    if not me:
+        return {"user": None}
+    with db() as conn:
+        people = conn.execute("SELECT COUNT(*) FROM persons WHERE user_id = ?", (me["id"],)).fetchone()[0]
+    return {"user": {"id": me["id"], "email": me["email"], "created_at": me["created_at"], "people": people}}
+
+
+class DeleteAccountIn(BaseModel):
+    password: str = ""
+    confirm: str = ""      # the word DELETE, typed out, so this can't happen by accident
+
+
+@app.delete("/api/auth/account")
+def delete_account(body: DeleteAccountIn, request: Request = None):
+    """Delete everything: the account, every person set up under it, their messages, and every
+    uploaded file. There is no undo, which is why it needs the password and the typed word."""
+    rate_limit(request, "auth")
+    me = auth.current()
+    if body.confirm.strip().upper() != "DELETE":
+        raise HTTPException(400, 'Type DELETE to confirm.')
+    try:
+        auth.verify_user(me["email"], body.password)
+    except auth.AuthError:
+        raise HTTPException(401, "That isn't your password.")
+    with db() as conn:
+        pids = [r["id"] for r in conn.execute("SELECT id FROM persons WHERE user_id = ?", (me["id"],))]
+        paths = [r["stored_path"] for r in conn.execute(
+            "SELECT s.stored_path FROM screenshots s JOIN persons p ON p.id = s.person_id "
+            "WHERE p.user_id = ? AND s.stored_path IS NOT NULL", (me["id"],))]
+        # Deleted by hand rather than left to the database's cascade: "delete everything" has to
+        # mean everything, so nothing depends on a foreign key behaving as expected.
+        for pid in pids:
+            conn.execute("DELETE FROM messages WHERE person_id = ?", (pid,))
+            conn.execute("DELETE FROM chat_messages WHERE person_id = ?", (pid,))
+            conn.execute("DELETE FROM media WHERE person_id = ?", (pid,))
+            conn.execute("DELETE FROM screenshots WHERE person_id = ?", (pid,))
+        conn.execute("DELETE FROM persons WHERE user_id = ?", (me["id"],))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (me["id"],))
+        conn.execute("DELETE FROM users WHERE id = ?", (me["id"],))
+    for p in paths:
+        (UPLOAD_DIR / p).unlink(missing_ok=True)
+    for pid in pids:
+        shutil.rmtree(UPLOAD_DIR / str(pid), ignore_errors=True)
+        engine.forget(pid)
+    resp = JSONResponse({"ok": True, "deleted_people": len(pids)})
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.put("/api/auth/password")
+def set_password(body: PasswordIn, request: Request = None):
+    rate_limit(request, "auth")
+    me = auth.current()
+    try:
+        auth.change_password(me["id"], body.old_password, body.new_password)
+    except auth.AuthError as exc:
+        raise HTTPException(400, str(exc))
+    token = auth.start_session(me["id"], request.headers.get("user-agent", "") if request else "")
+    return _signed_in(me, token)      # changing it signs out every other browser; keep this one
+
+
+# ---------------------------------------------------------------- who owns what
+def _uid() -> int:
+    """The signed-in account's id. The middleware already turned away anyone without one, so this
+    failing means a route was added outside /api without thinking about accounts."""
+    me = auth.current_id()
+    if me is None:
+        raise HTTPException(401, "Please sign in.")
+    return me
+
+
 def _person_row(conn, pid: int):
-    row = conn.execute("SELECT * FROM persons WHERE id = ?", (pid,)).fetchone()
+    """A person, but only if they're yours. Every route goes through here, which is what stops one
+    account reaching another's data - "not yours" and "doesn't exist" give the same answer, so
+    nobody can go fishing for which ids exist."""
+    row = conn.execute("SELECT * FROM persons WHERE id = ? AND user_id = ?", (pid, _uid())).fetchone()
     if not row:
         raise HTTPException(404, "Person not found")
+    return row
+
+
+def _owned(conn, table: str, row_id: int, what: str):
+    """One row from a table that hangs off a person (a screenshot, a message, a photo), but only
+    if that person belongs to you."""
+    row = conn.execute(
+        f"SELECT t.* FROM {table} t JOIN persons p ON p.id = t.person_id WHERE t.id = ? AND p.user_id = ?",
+        (row_id, _uid())).fetchone()
+    if not row:
+        raise HTTPException(404, f"{what} not found")
     return row
 
 
@@ -142,12 +346,21 @@ def _person_summary(conn, row) -> dict:
     pid = p["id"]
     one = lambda sql: conn.execute(sql, (pid,)).fetchone()[0]
     return {
-        "id": pid, "name": p["name"], "nickname": p["answers"].get("q2", ""),
+        "id": pid, "name": p["name"],
+        # The nickname you set in the chat wins; otherwise it's what you called them in the interview.
+        "nickname": (p.get("nick_them") or "").strip() or p["answers"].get("q2", ""),
+        "nick_them": p.get("nick_them") or "", "nick_me": p.get("nick_me") or "",
+        "avatar": f"/uploads/{p['avatar']}" if p.get("avatar") else None,
+        "my_avatar": f"/uploads/{p['my_avatar']}" if p.get("my_avatar") else None,
+        "theme": _loads(p.get("theme"), {}),
         "answers": p["answers"], "use_llm": p["use_llm"], "platform": p.get("platform") or "",
         "created_at": p["created_at"], "updated_at": p["updated_at"],
         "screenshot_count": one("SELECT COUNT(*) FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL"),
         "message_count": one("SELECT COUNT(*) FROM messages WHERE person_id = ?"),
         "person_message_count": one("SELECT COUNT(*) FROM messages WHERE person_id = ? AND speaker = 'person'"),
+        "chat_count": one("SELECT COUNT(*) FROM chat_messages WHERE person_id = ? AND kind != 'event'"),
+        "media_count": one("SELECT COUNT(*) FROM media WHERE person_id = ?"),
+        "remembers": len(notes.load(p.get("memory") or "")),
         "look": _look(conn, pid, p.get("platform") or "", _loads(p.get("look"), {})),
     }
 
@@ -167,6 +380,12 @@ def _messages_for_engine(conn, pid: int) -> list[dict]:
         "SELECT m.*, s.platform AS shot_platform FROM messages m JOIN screenshots s ON s.id = m.screenshot_id "
         "WHERE m.person_id = ? ORDER BY s.id, m.position", (pid,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def _load_training(pid: int) -> list[dict]:
+    """Their training messages, on its own short connection - used by the lazy loader in send_chat."""
+    with db() as conn:
+        return _messages_for_engine(conn, pid)
 
 
 def _person_for_engine(conn, pid: int) -> dict:
@@ -245,7 +464,7 @@ def _sync_practice(conn, pid: int, answers: dict) -> None:
 @app.get("/api/persons")
 def list_persons():
     with db() as conn:
-        rows = conn.execute("SELECT * FROM persons ORDER BY updated_at DESC").fetchall()
+        rows = conn.execute("SELECT * FROM persons WHERE user_id = ? ORDER BY updated_at DESC", (_uid(),)).fetchall()
         return [_person_summary(conn, r) for r in rows]
 
 
@@ -255,8 +474,8 @@ def create_person(body: AnswersIn):
     with db() as conn:
         ts = now()
         cur = conn.execute(
-            "INSERT INTO persons (name, answers, platform, created_at, updated_at) VALUES (?,?,?,?,?)",
-            (_name_from_answers(body.answers), json.dumps(body.answers), body.platform or "", ts, ts))
+            "INSERT INTO persons (name, answers, platform, user_id, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            (_name_from_answers(body.answers), json.dumps(body.answers), body.platform or "", _uid(), ts, ts))
         _sync_practice(conn, cur.lastrowid, body.answers)
         return _person_summary(conn, _person_row(conn, cur.lastrowid))
 
@@ -311,6 +530,98 @@ def update_look(pid: int, body: LookIn):
             prefs["colors"] = body.colors
         conn.execute("UPDATE persons SET look = ?, platform = COALESCE(?, platform) WHERE id = ?",
                      (json.dumps(prefs), body.platform, pid))
+        return _person_summary(conn, _person_row(conn, pid))
+
+
+# ---------------------------------------------------------------- profile picture, nicknames, theme
+def _event(conn, pid: int, text: str) -> None:
+    """A little grey note in the middle of the chat, the way the apps do it
+    ("You set the nickname for Lawrence to Law")."""
+    conn.execute("INSERT INTO chat_messages (person_id, role, text, kind, created_at) VALUES (?,?,?,'event',?)",
+                 (pid, "user", text, now()))
+
+
+@app.post("/api/persons/{pid}/avatar")
+def set_avatar(pid: int, file: UploadFile = File(...), who: str = "person", request: Request = None):
+    """Upload a profile picture - theirs, or yours for this chat. Saved as a small square."""
+    rate_limit(request, "upload")
+    if who not in ("person", "me"):
+        raise HTTPException(400, "who must be 'person' or 'me'")
+    with db() as conn:
+        row = _person_row(conn, pid)
+        old = row["my_avatar" if who == "me" else "avatar"]
+    data = file.file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, f"That photo is too big (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB).")
+    try:
+        saved = media_mod.save(UPLOAD_DIR / str(pid) / "avatar", file.filename or "photo.jpg", data, avatar=True)
+    except media_mod.MediaError as exc:
+        raise HTTPException(400, str(exc))
+    column = "my_avatar" if who == "me" else "avatar"
+    with db() as conn:
+        name = _person_dict(_person_row(conn, pid))["name"]
+        conn.execute(f"UPDATE persons SET {column} = ?, updated_at = ? WHERE id = ?",
+                     (f"{pid}/avatar/{saved['name']}", now(), pid))
+        _event(conn, pid, "You changed your photo." if who == "me" else f"You changed {name}'s photo.")
+        out = _person_summary(conn, _person_row(conn, pid))
+    if old:
+        (UPLOAD_DIR / old).unlink(missing_ok=True)
+    return out
+
+
+@app.delete("/api/persons/{pid}/avatar")
+def clear_avatar(pid: int, who: str = "person"):
+    if who not in ("person", "me"):
+        raise HTTPException(400, "who must be 'person' or 'me'")
+    column = "my_avatar" if who == "me" else "avatar"
+    with db() as conn:
+        row = _person_row(conn, pid)
+        old = row[column]
+        conn.execute(f"UPDATE persons SET {column} = NULL WHERE id = ?", (pid,))
+        out = _person_summary(conn, _person_row(conn, pid))
+    if old:
+        (UPLOAD_DIR / old).unlink(missing_ok=True)
+    return out
+
+
+class ProfileIn(BaseModel):
+    nick_them: str | None = None    # what you call them in this chat
+    nick_me: str | None = None      # what they call you
+    color: str | None = None        # chat theme colour ("" = back to the app's own colour)
+    emoji: str | None = None        # the quick-reaction emoji (Messenger's 👍 button)
+
+
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+@app.put("/api/persons/{pid}/profile")
+def update_profile(pid: int, body: ProfileIn):
+    """Nicknames and the chat theme, like tapping the name at the top of a Messenger chat."""
+    with db() as conn:
+        row = _person_row(conn, pid)
+        name = _person_dict(row)["name"]
+        theme = _loads(row["theme"], {})
+        if body.nick_them is not None:
+            nick = body.nick_them.strip()[:40]
+            if nick != (row["nick_them"] or ""):
+                conn.execute("UPDATE persons SET nick_them = ? WHERE id = ?", (nick, pid))
+                _event(conn, pid, f"You set the nickname for {name} to {nick}." if nick
+                       else f"You removed the nickname for {name}.")
+        if body.nick_me is not None:
+            nick = body.nick_me.strip()[:40]
+            if nick != (row["nick_me"] or ""):
+                conn.execute("UPDATE persons SET nick_me = ? WHERE id = ?", (nick, pid))
+                _event(conn, pid, f"You set your own nickname to {nick}." if nick else "You removed your nickname.")
+        if body.color is not None:
+            if body.color and not HEX_RE.match(body.color):
+                raise HTTPException(400, "Colour must look like #1877f2.")
+            theme["color"] = body.color
+            _event(conn, pid, "You changed the chat colour." if body.color else "You went back to the normal colour.")
+        if body.emoji is not None:
+            theme["emoji"] = body.emoji.strip()[:8]
+            _event(conn, pid, f"You changed the quick reaction to {theme['emoji']}." if theme["emoji"]
+                   else "You removed the quick reaction.")
+        conn.execute("UPDATE persons SET theme = ?, updated_at = ? WHERE id = ?", (json.dumps(theme), now(), pid))
         return _person_summary(conn, _person_row(conn, pid))
 
 
@@ -468,8 +779,8 @@ def upload_screenshots(pid: int, files: list[UploadFile] = File(...), request: R
 def reread_screenshot(sid: int):
     """Read a stored screenshot again with the current reader (e.g. after imy got smarter). Replaces its messages."""
     with db() as conn:
-        shot = conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone()
-        if not shot or not shot["stored_path"]:
+        shot = _owned(conn, "screenshots", sid, "Screenshot")
+        if not shot["stored_path"]:
             raise HTTPException(404, "Screenshot not found")
         person = _person_dict(_person_row(conn, shot["person_id"]))
     path = UPLOAD_DIR / shot["stored_path"]
@@ -626,9 +937,7 @@ def list_screenshots(pid: int):
 def flip_screenshot(sid: int):
     """Swap user/person on every message in a screenshot (when the sides were guessed backwards)."""
     with db() as conn:
-        shot = conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone()
-        if not shot:
-            raise HTTPException(404, "Screenshot not found")
+        shot = _owned(conn, "screenshots", sid, "Screenshot")
         conn.execute("UPDATE messages SET speaker = CASE speaker WHEN 'user' THEN 'person' ELSE 'user' END WHERE screenshot_id = ?", (sid,))
         conn.execute("UPDATE screenshots SET flipped = 1 - flipped WHERE id = ?", (sid,))
         bump_version(conn, shot["person_id"])
@@ -638,9 +947,7 @@ def flip_screenshot(sid: int):
 @app.delete("/api/screenshots/{sid}")
 def delete_screenshot(sid: int):
     with db() as conn:
-        shot = conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone()
-        if not shot:
-            raise HTTPException(404, "Screenshot not found")
+        shot = _owned(conn, "screenshots", sid, "Screenshot")
         conn.execute("DELETE FROM screenshots WHERE id = ?", (sid,))
         bump_version(conn, shot["person_id"])
     if shot["stored_path"]:
@@ -657,9 +964,7 @@ class MessageEdit(BaseModel):
 @app.put("/api/messages/{mid}")
 def edit_message(mid: int, body: MessageEdit):
     with db() as conn:
-        m = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
-        if not m:
-            raise HTTPException(404, "Message not found")
+        m = _owned(conn, "messages", mid, "Message")
         if body.speaker is not None and body.speaker not in ("user", "person"):
             raise HTTPException(400, "speaker must be 'user' or 'person'")
         conn.execute("UPDATE messages SET text = ?, speaker = ? WHERE id = ?",
@@ -672,9 +977,7 @@ def edit_message(mid: int, body: MessageEdit):
 @app.delete("/api/messages/{mid}")
 def delete_message(mid: int):
     with db() as conn:
-        m = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
-        if not m:
-            raise HTTPException(404, "Message not found")
+        m = _owned(conn, "messages", mid, "Message")
         conn.execute("DELETE FROM messages WHERE id = ?", (mid,))
         bump_version(conn, m["person_id"])
     return {"ok": True}
@@ -684,9 +987,7 @@ def delete_message(mid: int):
 def merge_message_up(mid: int):
     """Glue this message onto the one before it (when one bubble was split in two)."""
     with db() as conn:
-        m = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
-        if not m:
-            raise HTTPException(404, "Message not found")
+        m = _owned(conn, "messages", mid, "Message")
         prev = conn.execute("SELECT * FROM messages WHERE screenshot_id = ? AND position < ? ORDER BY position DESC LIMIT 1",
                             (m["screenshot_id"], m["position"])).fetchone()
         if not prev:
@@ -697,59 +998,272 @@ def merge_message_up(mid: int):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- sharing photos and files in the chat
+def _media_out(row) -> dict:
+    return {"id": row["id"], "url": f"/uploads/{row['stored_path']}", "kind": row["kind"], "mime": row["mime"],
+            "filename": row["filename"], "width": row["width"], "height": row["height"],
+            "bytes": row["bytes"], "description": row["description"], "created_at": row["created_at"]}
+
+
+@app.post("/api/persons/{pid}/media")
+def upload_media(pid: int, files: list[UploadFile] = File(...), request: Request = None):
+    """Share a photo or file in the chat. It's saved with this person, and - if a free AI that can see
+    images is set up - imy writes down what's in it, so their reply can be about the photo itself."""
+    rate_limit(request, "upload")
+    with db() as conn:
+        _person_row(conn, pid)
+    out = []
+    for f in files[:10]:
+        data = f.file.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            out.append({"filename": f.filename, "error": f"too big (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)"})
+            continue
+        try:
+            saved = media_mod.save(UPLOAD_DIR / str(pid) / "media", f.filename or "photo.jpg", data)
+        except media_mod.MediaError as exc:
+            out.append({"filename": f.filename, "error": str(exc)})
+            continue
+        path = UPLOAD_DIR / str(pid) / "media" / saved["name"]
+        desc = media_mod.describe(path, saved["kind"], saved["filename"])   # slow: done before any database lock
+        with db() as conn:
+            cur = conn.execute(
+                "INSERT INTO media (person_id, stored_path, filename, kind, mime, bytes, width, height, description, sender, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,'user',?)",
+                (pid, f"{pid}/media/{saved['name']}", saved["filename"], saved["kind"], saved["mime"],
+                 saved["bytes"], saved["width"], saved["height"], desc, now()))
+            out.append(_media_out(conn.execute("SELECT * FROM media WHERE id = ?", (cur.lastrowid,)).fetchone()))
+    if len(files) == 1 and out and out[0].get("error"):
+        raise HTTPException(400, f"{out[0]['filename']}: {out[0]['error']}")
+    return out
+
+
+@app.get("/uploads/{path:path}")
+def serve_upload(path: str):
+    """Screenshots, profile pictures and shared photos.
+
+    These used to be handed to anyone who knew the address. Every uploaded file is stored under the
+    id of the person it belongs to, so the first part of the path says who owns it - and you only
+    get the file if that person is yours. `resolve()` is what stops a path like `../../` from
+    reaching out of the uploads folder."""
+    base = UPLOAD_DIR.resolve()
+    target = (base / path).resolve()
+    owner = path.split("/")[0] if path else ""
+    if not owner.isdigit() or base not in target.parents or not target.is_file():
+        raise HTTPException(404, "Not found")
+    with db() as conn:
+        _person_row(conn, int(owner))      # 404s unless this person belongs to you
+    # "private" so only this browser caches it, never a shared cache along the way.
+    return FileResponse(target, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/persons/{pid}/media")
+def list_media(pid: int):
+    """Everything shared in this chat, newest first - the "Media & files" screen."""
+    with db() as conn:
+        _person_row(conn, pid)
+        rows = conn.execute(
+            "SELECT m.* FROM media m WHERE m.person_id = ? AND NOT EXISTS "
+            "(SELECT 1 FROM chat_messages c WHERE c.media_id = m.id AND c.deleted = 1) ORDER BY m.id DESC LIMIT 300",
+            (pid,)).fetchall()
+        return [_media_out(r) for r in rows]
+
+
 # ---------------------------------------------------------------- chat
 class ChatIn(BaseModel):
     message: str = ""
-    messages: list[str] = []    # several messages sent in a row ("burst"): answered together, like a person would
+    messages: list[str] = []      # several messages sent in a row ("burst"): answered together, like a person would
+    media_ids: list[int] = []     # photos or files sent with this message
+    reply_to: int | None = None   # the message you're replying to
+
+
+CHAT_COLS = ("SELECT c.id, c.role, c.text, c.kind, c.debug, c.created_at, c.reactions, c.reply_to, c.deleted, "
+             "c.media_id FROM chat_messages c WHERE c.person_id = ?")
+PAGE = 60
+
+
+def _in(ids) -> str:
+    return ",".join("?" * len(ids))
+
+
+def _chat_out(conn, rows) -> list[dict]:
+    """Add each message's photo and the message it replies to."""
+    media_ids = sorted({r["media_id"] for r in rows if r["media_id"]})
+    media = {r["id"]: _media_out(r) for r in conn.execute(
+        f"SELECT * FROM media WHERE id IN ({_in(media_ids)})", media_ids)} if media_ids else {}
+    quoted_ids = sorted({r["reply_to"] for r in rows if r["reply_to"]})
+    quotes = {}
+    if quoted_ids:
+        q = conn.execute(f"SELECT id, role, text, kind, media_id FROM chat_messages WHERE id IN ({_in(quoted_ids)})",
+                         quoted_ids).fetchall()
+        quotes = {r["id"]: {"id": r["id"], "role": r["role"], "text": r["text"], "kind": r["kind"],
+                            "photo": bool(r["media_id"])} for r in q}
+    out = []
+    for r in rows:
+        m = {"id": r["id"], "role": r["role"], "kind": r["kind"] or "text", "created_at": r["created_at"],
+             "text": "" if r["deleted"] else r["text"], "deleted": bool(r["deleted"]),
+             "debug": _loads(r["debug"], None), "reactions": _loads(r["reactions"], {}),
+             "media": media.get(r["media_id"]) if not r["deleted"] else None,
+             "quote": quotes.get(r["reply_to"]), "reply_to": r["reply_to"]}
+        out.append(m)
+    return out
 
 
 @app.get("/api/persons/{pid}/chat")
-def get_chat(pid: int):
+def get_chat(pid: int, before: int | None = None, limit: int = PAGE):
+    """The conversation, newest page first. Everything is kept on the server, so closing the browser
+    (or restarting imy) loses nothing: scrolling up loads the older messages."""
+    limit = max(10, min(200, limit))
     with db() as conn:
         _person_row(conn, pid)
-        rows = conn.execute("SELECT id, role, text, debug, created_at FROM chat_messages WHERE person_id = ? ORDER BY id", (pid,)).fetchall()
-        return [{**dict(r), "debug": _loads(r["debug"], None)} for r in rows]
+        sql = CHAT_COLS + (" AND c.id < ?" if before else "") + " ORDER BY c.id DESC LIMIT ?"
+        args = [pid] + ([before] if before else []) + [limit + 1]
+        rows = conn.execute(sql, args).fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit][::-1]
+        return {"messages": _chat_out(conn, rows), "has_more": more}
 
 
 SAFE_REPLIES = ["wait lang", "teka", "hmm", "one sec"]
+
+
+def _history_line(row) -> dict:
+    """One past message as the reply engine sees it: a photo becomes the words describing it."""
+    text = row["text"] or ""
+    if row["kind"] == "media" and row["description"]:
+        text = f"[sent a photo: {row['description'][:200]}]" + (f" {text}" if text else "")
+    return {"role": row["role"], "text": text}
+
+
+def _maybe_react(index, texts: list[str], rng_seed: int) -> str:
+    """Sometimes a person reacts to your message as well as replying. Uses their own favourite emojis."""
+    rng = random.Random(rng_seed)
+    if rng.random() > 0.14 or not texts or len(texts[-1]) < 4:
+        return ""
+    favs = (index.style.get("top_emojis") or [])[:4] or ["❤️", "😂", "🥹"]
+    return rng.choice(favs)
 
 
 @app.post("/api/persons/{pid}/chat")
 def send_chat(pid: int, body: ChatIn, request: Request = None):
     rate_limit(request, "chat")
     texts = [t.strip()[:4000] for t in (body.messages or [body.message]) if t and t.strip()][:12]
-    if not texts:
+    if not texts and not body.media_ids:
         raise HTTPException(400, "Message is empty.")
+    sent, shared = [], []
     with db() as conn:            # 1. save what you said (a short write)
         person = _person_for_engine(conn, pid)
-        history = [dict(r) for r in conn.execute(
-            "SELECT role, text FROM chat_messages WHERE person_id = ? ORDER BY id DESC LIMIT 16", (pid,)).fetchall()][::-1]
-        for t in texts:
-            conn.execute("INSERT INTO chat_messages (person_id, role, text, created_at) VALUES (?,?,?,?)", (pid, "user", t, now()))
-        training = _messages_for_engine(conn, pid)
+        history = [_history_line(r) for r in conn.execute(
+            "SELECT c.role, c.text, c.kind, m.description FROM chat_messages c LEFT JOIN media m ON m.id = c.media_id "
+            "WHERE c.person_id = ? AND c.kind != 'event' AND c.deleted = 0 ORDER BY c.id DESC LIMIT 16", (pid,)).fetchall()][::-1]
+        for mid in body.media_ids[:10]:       # photos first, then your words, like in a real chat
+            row = conn.execute("SELECT * FROM media WHERE id = ? AND person_id = ?", (mid, pid)).fetchone()
+            if not row:
+                continue
+            shared.append(row["description"] or "a photo")
+            cur = conn.execute("INSERT INTO chat_messages (person_id, role, text, kind, media_id, reply_to, created_at) "
+                               "VALUES (?,?,'','media',?,?,?)", (pid, "user", mid, body.reply_to, now()))
+            sent.append(cur.lastrowid)
+        for n, t in enumerate(texts):
+            cur = conn.execute("INSERT INTO chat_messages (person_id, role, text, reply_to, created_at) VALUES (?,?,?,?,?)",
+                               (pid, "user", t, body.reply_to if n == 0 and not sent else None, now()))
+            sent.append(cur.lastrowid)
+        quote = conn.execute("SELECT text FROM chat_messages WHERE id = ? AND person_id = ?",
+                             (body.reply_to, pid)).fetchone() if body.reply_to else None
+    # Their training messages are fetched only if the engine actually needs to rebuild its index -
+    # usually it doesn't, because the index is cached. Reading thousands of rows on every message
+    # just to discard them is the kind of waste that only shows up once lots of people are chatting.
+    training = lambda: _load_training(pid)
     history += [{"role": "user", "text": t} for t in texts[:-1]]
+    said = "\n".join(texts) if texts else ""
+    if quote and quote["text"]:
+        said = f'(replying to your message "{quote["text"][:120]}") {said}'.strip()
     try:                          # 2. think (no database lock held: other requests keep working)
-        reply = engine.generate_reply(person, training, history, texts[-1] if len(texts) == 1 else "\n".join(texts))
+        reply = engine.generate_reply(person, training, history, said, shared or None)
         bubbles = [b for b in reply.bubbles if b and b.strip()] or [SAFE_REPLIES[0]]
         debug = reply.debug()
     except Exception:
         print(f"[imy] reply failed:\n{traceback.format_exc()}")
         bubbles, debug = [SAFE_REPLIES[len(history) % len(SAFE_REPLIES)]], {"source": "safe", "note": "Something went wrong; sent a neutral reply."}
-    out = []
+    out, react = [], ""
     with db() as conn:            # 3. save the reply (another short write)
         for i, bubble in enumerate(bubbles):
             last = i == len(bubbles) - 1
             cur = conn.execute("INSERT INTO chat_messages (person_id, role, text, debug, created_at) VALUES (?,?,?,?,?)",
                                (pid, "person", bubble, json.dumps(debug) if last else None, now()))
-            out.append({"id": cur.lastrowid, "role": "person", "text": bubble, "created_at": now(), "debug": debug if last else None})
-    return {"bubbles": out}
+            out.append({"id": cur.lastrowid, "role": "person", "text": bubble, "kind": "text",
+                        "created_at": now(), "debug": debug if last else None, "reactions": {}})
+        try:
+            react = _maybe_react(engine.get_index(person, training), texts, sent[-1] if sent else 0)
+            if react and sent:
+                conn.execute("UPDATE chat_messages SET reactions = ? WHERE id = ?",
+                             (json.dumps({"person": react}), sent[-1]))
+        except Exception:
+            react = ""
+        rows = conn.execute(CHAT_COLS + f" AND c.id IN ({_in(sent)}) ORDER BY c.id", [pid] + sent).fetchall() if sent else []
+        mine = _chat_out(conn, rows)
+    notes.update_later(pid, person["name"])      # keep their memory of this chat up to date, in the background
+    return {"bubbles": out, "sent": mine, "reaction": {"id": sent[-1], "emoji": react} if react and sent else None}
+
+
+class ReactIn(BaseModel):
+    emoji: str = ""      # "" removes your reaction
+    who: str = "user"    # "user" = you, "person" = them
+
+
+@app.post("/api/chat-messages/{mid}/react")
+def react_to_message(mid: int, body: ReactIn):
+    """Tap a message to react to it, like every chat app. Tapping the same emoji again removes it."""
+    if body.who not in ("user", "person"):
+        raise HTTPException(400, "who must be 'user' or 'person'")
+    with db() as conn:
+        row = _owned(conn, "chat_messages", mid, "Message")
+        reactions = _loads(row["reactions"], {})
+        emoji = body.emoji.strip()[:8]
+        if not emoji or reactions.get(body.who) == emoji:
+            reactions.pop(body.who, None)
+        else:
+            reactions[body.who] = emoji
+        conn.execute("UPDATE chat_messages SET reactions = ? WHERE id = ?", (json.dumps(reactions), mid))
+        return {"id": mid, "reactions": reactions}
+
+
+@app.delete("/api/chat-messages/{mid}")
+def unsend_message(mid: int):
+    """Unsend: the bubble stays as "You unsent a message", exactly like Messenger."""
+    with db() as conn:
+        _owned(conn, "chat_messages", mid, "Message")
+        conn.execute("UPDATE chat_messages SET deleted = 1, text = '' WHERE id = ?", (mid,))
+        return {"id": mid, "deleted": True}
 
 
 @app.delete("/api/persons/{pid}/chat")
-def clear_chat(pid: int):
+def clear_chat(pid: int, media: bool = False):
+    """Clear the conversation. The photos you shared stay unless you ask for those too."""
     with db() as conn:
         _person_row(conn, pid)
+        paths = [r["stored_path"] for r in conn.execute("SELECT stored_path FROM media WHERE person_id = ?", (pid,))] if media else []
         conn.execute("DELETE FROM chat_messages WHERE person_id = ?", (pid,))
+        if media:
+            conn.execute("DELETE FROM media WHERE person_id = ?", (pid,))
+        conn.execute("UPDATE persons SET memory = '' WHERE id = ?", (pid,))
+    for p in paths:
+        (UPLOAD_DIR / p).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/api/persons/{pid}/memory")
+def get_memory(pid: int):
+    """What they remember from your conversations (you can see it and clear it)."""
+    with db() as conn:
+        row = _person_row(conn, pid)
+        return {"notes": notes.load(row["memory"] or "")}
+
+
+@app.delete("/api/persons/{pid}/memory")
+def clear_memory(pid: int):
+    with db() as conn:
+        _person_row(conn, pid)
+        conn.execute("UPDATE persons SET memory = '' WHERE id = ?", (pid,))
     return {"ok": True}
 
 

@@ -303,6 +303,105 @@ def chat(system: str, history: list[dict], user_text: str, max_bubbles: int, nam
     raise last
 
 
+def ask(system: str, user_text: str) -> str:
+    """One plain question to the AI, answered as raw text (used for imy's own background jobs,
+    like keeping notes of what you told them). Returns "" if no model answered."""
+    for attempt, (p, model) in enumerate(_candidates()):
+        if attempt >= 2:
+            break
+        try:
+            return CALLS[p][1](model, system, [{"role": "user", "content": user_text}]).strip()
+        except (LLMError, KeyError, IndexError, TypeError) as exc:
+            print(f"[imy] {p}/{model}: {explain(exc) if isinstance(exc, LLMError) else exc}")
+            if isinstance(exc, LLMError):
+                _cool(p, model, exc)
+    return ""
+
+
+# ------------------------------------------------------------------ looking at a photo
+# Some free models can see images. imy uses one to put into words what a shared photo shows, so the
+# reply can be about the photo ("ang ganda ng view!") instead of a guess. If no model can see, the
+# photo is still sent and saved - imy just describes less (see media.py).
+# Which model can look at a picture changes every few months, so imy asks Groq for its current list
+# (see _vision_candidates) and keeps anything whose name matches one of these. The list below is only
+# used when that request fails; it's in date order, newest first, so an old name further down is
+# simply skipped after one 404.
+VISION_HINTS = ("qwen3.8", "llama-4", "scout", "maverick", "vision", "-vl", "llava", "pixtral")
+GROQ_VISION_FALLBACK = ["qwen/qwen3.8-27b",                              # Groq's image model as of Oct 2026
+                        "meta-llama/llama-4-scout-17b-16e-instruct",     # retired; harmless to try
+                        "meta-llama/llama-4-maverick-17b-128e-instruct"]
+SEE_PROMPT = ("Describe this image for someone who can't see it, in one or two short sentences. "
+              "Say what it shows, the mood, and any text that stands out. If it's a screenshot, say so and "
+              "summarise what's on it. No preamble, just the description.")
+
+
+def _groq_see(model: str, data_url: str, prompt: str) -> str:
+    # The picture and the question go in one message, the way Groq expects. Thinking is switched off
+    # where the model supports it: imy wants the description, not the model's reasoning out loud.
+    body = {"model": model, "temperature": 0.3, "max_completion_tokens": 300,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": prompt},
+                                                      {"type": "image_url", "image_url": {"url": data_url}}]}]}
+    extra = {} if model in _plain else {"reasoning_effort": "none"} if "qwen3" in model else {}
+    headers = {"Authorization": f"Bearer {_key('groq')}"}
+    try:
+        data = _http(f"{GROQ}/chat/completions", headers, {**body, **extra})
+    except LLMError as exc:
+        if exc.status == 400 and extra:        # this model doesn't take that setting: ask plainly, and remember
+            data = _http(f"{GROQ}/chat/completions", headers, body)
+            _plain.add(model)
+        else:
+            raise
+    text = data["choices"][0]["message"].get("content") or ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+
+
+def _gemini_see(model: str, data_url: str, prompt: str) -> str:
+    mime, _, b64 = data_url.removeprefix("data:").partition(";base64,")
+    body = {"contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": b64}}]}],
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 220}}
+    data = _http(f"{GEMINI}/models/{model}:generateContent", {"x-goog-api-key": _key("gemini")}, body)
+    parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+
+
+def _vision_candidates() -> list[tuple[str, str]]:
+    now = time.time()
+    out = []
+    for p in providers():
+        try:
+            names = [n for n in _ranked(p) if any(h in n.lower() for h in VISION_HINTS)]
+        except LLMError:
+            names = []
+        if not names and p == "groq":
+            names = GROQ_VISION_FALLBACK
+        if not names and p == "gemini":
+            names = ["gemini-flash-latest"]
+        out += [(p, n) for n in names[:2] if _cooldown.get((p, "see:" + n), 0) <= now]
+    return out
+
+
+def can_see() -> bool:
+    return bool(providers())
+
+
+def see(data_url: str, prompt: str = SEE_PROMPT) -> str:
+    """One short description of an image. Returns "" if no free model could look at it."""
+    seers = {"groq": _groq_see, "gemini": _gemini_see}
+    for p, model in _vision_candidates()[:3]:
+        try:
+            text = seers[p](model, data_url, prompt)
+        except LLMError as exc:
+            print(f"[imy] {p}/{model} couldn't look at the photo: {explain(exc)}")
+            _cooldown[(p, "see:" + model)] = time.time() + (600 if exc.status in (401, 403) else 120)
+            continue
+        except (KeyError, IndexError, TypeError):
+            continue
+        text = " ".join(text.split())
+        if text:
+            return text[:600]
+    return ""
+
+
 def clean_line(line: str, name: str = "") -> str:
     """Models sometimes add "Name:", quotes or list markers; a text message has none of those."""
     t = line.strip()

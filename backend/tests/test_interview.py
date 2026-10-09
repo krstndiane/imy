@@ -49,9 +49,12 @@ def test_how_would_they_reply_answers_are_used():
 def test_fixes_from_the_chat_and_merging(tmp_path=None, monkeypatch=None):
     import os, tempfile, importlib
     os.environ["IMY_DATA_DIR"] = tempfile.mkdtemp()
-    from backend import db as db_mod, main
+    from backend import auth, db as db_mod, main
     importlib.reload(db_mod); importlib.reload(main)
     main.init_db()
+    # Everyone's data belongs to an account now. Calling the API straight from a test skips the
+    # sign-in cookie, so say who's asking, the way the middleware normally would.
+    auth.CURRENT.set(auth.create_user("test@example.com", "testing12345", True))
     a = main.create_person(main.AnswersIn(answers={"q1": "Sam", "q3": "bebe"}))
     b = main.create_person(main.AnswersIn(answers={"q1": "Sam", "q6": "makulit, loyal, chill"}))
     main.teach(a["id"], main.TeachIn(prompt="pagod ako", reply="pahinga ka muna bebe"))

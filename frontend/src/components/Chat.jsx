@@ -1,15 +1,17 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { initials } from "./Sidebar";
-import { PLATFORMS, platformOf } from "../platforms";
+import { platformOf } from "../platforms";
 import { load, save } from "../storage";
+import Avatar from "./Avatar";
 import Icon from "./Icon";
 import TrainPanel from "./TrainPanel";
+import { LookPanel, MediaPanel, MemoryPanel, PhotoViewer, ProfilePanel } from "./ChatPanels";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 const rand = (a, b) => a + Math.random() * (b - a);
 const clock = (iso) => (iso ? new Date(iso) : new Date()).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const WHY_KEY = "imy.showWhy";
+const kb = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
 /* ---------- timing: reply like a person, not a bot ----------
    1. READ   they "see" your message after a moment (longer messages take longer to read)
@@ -61,31 +63,42 @@ function explain(d) {
 export default function Chat({ person, persons = [], theme = "dark", onChanged, onEdit, onDelete, onBack }) {
   const [mode, setMode] = useState("chat");      // "chat" | "train"
   const [menu, setMenu] = useState(false);
-  const [panel, setPanel] = useState(null);      // null | "style" | "look"
+  const [panel, setPanel] = useState(null);      // null | style | look | profile | media | memory
   const [fixing, setFixing] = useState(null);    // id of the reply being corrected
   const [fixText, setFixText] = useState("");
   const [taught, setTaught] = useState({});      // reply id -> "good" | "fixed"
   const [msgs, setMsgs] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [input, setInput] = useState("");
+  const [older, setOlder] = useState(false);     // are there messages further back?
+  const [input, setInput] = useState(() => load(`imy.draft.${person.id}`, ""));
   const [typing, setTyping] = useState(false);
   const [why, setWhy] = useState(null);
   const [style, setStyle] = useState(null);
   const [error, setError] = useState("");
+  const [attach, setAttach] = useState([]);      // photos picked but not sent yet
+  const [busyUpload, setBusyUpload] = useState(false);
+  const [replyTo, setReplyTo] = useState(null);  // the message you're replying to
+  const [bar, setBar] = useState(null);          // id of the message whose reaction bar is open
+  const [photo, setPhoto] = useState(null);      // photo opened full size
+  const [find, setFind] = useState(null);        // search text, or null when the search box is closed
   const [showWhy, setShowWhy] = useState(() => load(WHY_KEY) === "1");   // "why this reply?" links give the game away: off by default
   const [hideHint, setHideHint] = useState(() => load(`imy.lookHint.${person.id}`) === "1");
 
-  const queue = useRef([]);        // your messages waiting for a reply: [{id, text}]
+  const queue = useRef([]);        // your messages waiting for a reply
   const busy = useRef(false);      // a reply is being read / typed right now
   const timer = useRef(null);
   const typedAt = useRef(0);
   const field = useRef();
+  const picker = useRef();
   const alive = useRef(true);
   const cps = useRef(rand(4.6, 6.2));   // this person's typing speed (letters per second) for this chat
+  const thread = useRef();
   const end = useRef();
 
   const name = person.nickname || person.name;
   const look = person.look || {};
+  const colour = person.theme?.color || "";
+  const quick = person.theme?.emoji || "👍";
   const skin = person.platform || look.platform || "";        // the app you picked, else the one your screenshots are from
   const app = platformOf(skin);
   const skinned = !!app.id;
@@ -101,21 +114,55 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
     if (look.them) { vars["--c-them"] = look.them; vars["--c-them-ink"] = look.them_ink; }
     if (skin === "messenger" || skin === "viber") vars["--c-accent"] = look.user_bottom || look.user;
   }
+  if (colour) {   // a colour you picked yourself wins over everything
+    vars["--c-user"] = colour; vars["--c-user-solid"] = colour; vars["--c-user-ink"] = "#fff"; vars["--c-accent"] = colour;
+  }
 
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; clearTimeout(timer.current); };
   }, []);
+
+  /* The conversation is kept on the server, so it's all still here when you come back. */
   useEffect(() => {
     api.chat(person.id)
-      .then((list) => alive.current && setMsgs(Array.isArray(list) ? list.map((m) => ({ ...m, status: "seen" })) : []))
+      .then((r) => {
+        if (!alive.current) return;
+        const list = Array.isArray(r) ? r : r.messages || [];
+        setMsgs(list.map((m) => ({ ...m, status: "seen" })));
+        setOlder(!!r.has_more);
+      })
       .catch((e) => alive.current && setError(e.message))
       .finally(() => alive.current && setLoaded(true));
   }, [person.id]);
-  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [msgs, typing]);
+
+  useEffect(() => { save(`imy.draft.${person.id}`, input); }, [input, person.id]);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [msgs.length, typing]);
   useEffect(() => {
     if (panel === "style") api.style(person.id).then(setStyle).catch((e) => setError(e.message));
   }, [panel, person.id]);
+
+  /* Scrolled to the top of a long chat: quietly bring in the older messages. */
+  const loadOlder = useCallback(async () => {
+    const box = thread.current;
+    if (!box || !older || !msgs.length) return;
+    setOlder(false);
+    const was = box.scrollHeight;
+    try {
+      const r = await api.chat(person.id, msgs[0].id);
+      if (!alive.current) return;
+      setMsgs((m) => [...(r.messages || []).map((x) => ({ ...x, status: "seen" })), ...m]);
+      setOlder(!!r.has_more);
+      requestAnimationFrame(() => { if (thread.current) thread.current.scrollTop = thread.current.scrollHeight - was; });
+    } catch (e) {
+      setOlder(true);
+      setError(e.message);
+    }
+  }, [older, msgs, person.id]);
+
+  function onScroll(e) {
+    if (e.currentTarget.scrollTop < 80) loadOlder();
+  }
 
   /* Wait until you've finished a burst of messages (people often send 2-3 in a row), then reply to all of them. */
   function schedule(delay) {
@@ -130,11 +177,14 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
     if (busy.current || !queue.current.length) return;
     busy.current = true;
     const batch = queue.current.splice(0);
-    const ids = batch.map((b) => b.id);
-    const texts = batch.map((b) => b.text);
-    const call = api.sayMany(person.id, texts).then((r) => ({ ok: true, r }), (e) => ({ ok: false, e }));
+    const ids = batch.flatMap((b) => b.ids);
+    const texts = batch.map((b) => b.text).filter(Boolean);
+    const mediaIds = batch.flatMap((b) => b.mediaIds || []);
+    const answering = batch.find((b) => b.replyTo)?.replyTo || null;
+    const call = api.sayMany(person.id, texts, { media_ids: mediaIds, reply_to: answering })
+      .then((r) => ({ ok: true, r }), (e) => ({ ok: false, e }));
     try {
-      await wait(readMs(texts));                                                     // 1. read
+      await wait(readMs(texts.length ? texts : ["photo"]));                          // 1. read
       if (!alive.current) return;
       const seenAt = new Date().toISOString();
       setMsgs((m) => m.map((x) => (ids.includes(x.id) ? { ...x, status: "seen", seenAt } : x)));
@@ -149,6 +199,10 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
         setMsgs((m) => m.map((x) => (ids.includes(x.id) ? { ...x, status: "failed" } : x)));
         setError(res.e.message);
         return;
+      }
+      if (res.r.sent?.length) {   // swap your temporary bubbles for the saved ones (real ids, real photos)
+        setMsgs((m) => [...m.filter((x) => !ids.includes(x.id)),
+                        ...res.r.sent.map((x) => ({ ...x, status: "seen", seenAt }))]);
       }
       const bubbles = res.r.bubbles || [];
       for (let k = 0; k < bubbles.length; k++) {                                     // 3 + 4. type each bubble
@@ -176,6 +230,12 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
         const b = bubbles[k];
         setMsgs((m) => [...m, { ...b, created_at: new Date().toISOString(), status: "seen" }]);
       }
+      if (res.r.reaction) {                                                          // they reacted to your message
+        await wait(rand(400, 1400));
+        if (!alive.current) return;
+        const { id, emoji } = res.r.reaction;
+        setMsgs((m) => m.map((x) => (x.id === id ? { ...x, reactions: { ...(x.reactions || {}), person: emoji } } : x)));
+      }
     } finally {
       busy.current = false;
       if (alive.current && queue.current.length) schedule(rand(600, 1200));         // you texted again meanwhile
@@ -183,13 +243,19 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
   }
 
   function submit(e) {
-    e.preventDefault();
+    e?.preventDefault();
     const text = input.trim();
-    if (!text) return;
-    setInput(""); setError("");
-    const id = `tmp${Date.now()}${Math.random()}`;
-    setMsgs((m) => [...m, { id, role: "user", text, created_at: new Date().toISOString(), status: "sent" }]);
-    queue.current.push({ id, text });
+    if (!text && !attach.length) return;
+    const stamp = new Date().toISOString();
+    const tmp = (n) => `tmp${Date.now()}${n}${Math.random()}`;
+    const quote = replyTo ? { id: replyTo.id, role: replyTo.role, text: replyTo.text, photo: !!replyTo.media } : null;
+    const bubbles = attach.map((m, i) => ({ id: tmp("m" + i), role: "user", kind: "media", text: "", media: m,
+                                            created_at: stamp, status: "sent", quote }));
+    if (text) bubbles.push({ id: tmp("t"), role: "user", kind: "text", text, created_at: stamp, status: "sent",
+                             quote: bubbles.length ? null : quote });
+    setInput(""); setAttach([]); setReplyTo(null); setError("");
+    setMsgs((m) => [...m, ...bubbles]);
+    queue.current.push({ ids: bubbles.map((b) => b.id), text, mediaIds: attach.map((m) => m.id), replyTo: replyTo?.id || null });
     if (!busy.current) schedule(rand(650, 1100));
   }
 
@@ -197,14 +263,53 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
     const failed = msgs.filter((m) => m.status === "failed");
     if (!failed.length) return;
     setMsgs((m) => m.map((x) => (x.status === "failed" ? { ...x, status: "sent" } : x)));
-    queue.current.push(...failed.map((m) => ({ id: m.id, text: m.text })));
+    queue.current.push({ ids: failed.map((m) => m.id), text: failed.map((m) => m.text).filter(Boolean).join("\n"),
+                         mediaIds: failed.filter((m) => m.media).map((m) => m.media.id), replyTo: null });
     setError("");
     if (!busy.current) schedule(300);
   }
 
+  /* Photos and files: uploaded as soon as you pick them, so you see them before you hit send. */
+  async function pickFiles(list) {
+    const files = [...list].slice(0, 10);
+    if (!files.length) return;
+    setBusyUpload(true); setError("");
+    try {
+      const saved = await api.uploadMedia(person.id, files);
+      const good = (saved || []).filter((m) => !m.error);
+      const bad = (saved || []).filter((m) => m.error);
+      if (bad.length) setError(`${bad[0].filename}: ${bad[0].error}`);
+      setAttach((a) => [...a, ...good].slice(0, 10));
+      field.current?.focus();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyUpload(false);
+    }
+  }
+  function onPaste(e) {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); pickFiles(files); }
+  }
+
+  async function toggleReaction(m, emoji) {
+    setBar(null);
+    const mine = m.reactions?.user;
+    const next = { ...(m.reactions || {}) };
+    if (mine === emoji) delete next.user; else next.user = emoji;
+    setMsgs((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: next } : x)));
+    try { await api.react(m.id, emoji); } catch (e) { setError(e.message); }
+  }
+  async function unsend(m) {
+    setBar(null);
+    if (!confirm("Unsend this message?")) return;
+    setMsgs((list) => list.map((x) => (x.id === m.id ? { ...x, deleted: true, text: "", media: null } : x)));
+    try { await api.unsend(m.id); } catch (e) { setError(e.message); }
+  }
+
   async function clear() {
     if (!confirm(`Clear your chat history with ${name}? Their learned data stays.`)) return;
-    try { await api.clearChat(person.id); setMsgs([]); } catch (e) { setError(e.message); }
+    try { await api.clearChat(person.id); setMsgs([]); setOlder(false); onChanged(); } catch (e) { setError(e.message); }
   }
   async function toggleLlm(on) {
     try { await api.setLlm(person.id, on); onChanged(); } catch (e) { setError(e.message); }
@@ -238,14 +343,20 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
     : `${person.person_message_count} of their messages learned from ${person.screenshot_count} screenshot${person.screenshot_count === 1 ? "" : "s"}`;
   const status = typing && app.typingIn === "header" ? app.typingText : skinned ? app.status : learned;
   const detected = look.detected && look.detected !== person.platform ? platformOf(look.detected) : null;
+  const shown = find ? msgs.filter((m) => (m.text || "").toLowerCase().includes(find.toLowerCase())) : msgs;
   const lastIndex = msgs.length - 1;
+  const openPanel = (p) => { setMode("chat"); setPanel((cur) => (cur === p ? null : p)); };
 
   const item = (label, fn) => <button className="btn small" role={skinned ? "menuitem" : undefined} onClick={fn}>{label}</button>;
   const actions = (
     <>
       {item(mode === "train" ? "Back to chat" : "Train", () => setMode(mode === "train" ? "chat" : "train"))}
-      {item(panel === "look" ? "Hide chat look" : "Chat look", () => { setMode("chat"); setPanel(panel === "look" ? null : "look"); })}
-      {item(panel === "style" ? "Hide style" : "How they write", () => { setMode("chat"); setPanel(panel === "style" ? null : "style"); })}
+      {item("Profile & nicknames", () => openPanel("profile"))}
+      {item("Media & files", () => openPanel("media"))}
+      {item("What they remember", () => openPanel("memory"))}
+      {item(panel === "look" ? "Hide chat look" : "Chat look", () => openPanel("look"))}
+      {item(panel === "style" ? "Hide style" : "How they write", () => openPanel("style"))}
+      {item(find === null ? "Search in chat" : "Close search", () => setFind(find === null ? "" : null))}
       {item("Edit profile", onEdit)}
       <button className="btn small ghost" role={skinned ? "menuitem" : undefined} onClick={clear}>Clear chat</button>
       <button className="btn small ghost danger" role={skinned ? "menuitem" : undefined} onClick={() => confirm(`Delete ${name} and everything learned about them?`) && onDelete()}>Delete</button>
@@ -256,7 +367,9 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
     <div className={"chat skin-" + (app.id || "imy")} data-mode={chatMode} style={vars}>
       <header className="chat-head">
         {skinned && <button className="ic-btn back" aria-label="Back to people" onClick={onBack}><Icon name="back" /></button>}
-        <span className="avatar big">{initials(name)}{app.dot && <i className="dot" />}</span>
+        <button className="avatar-btn" aria-label={`${name}'s profile`} onClick={() => openPanel("profile")}>
+          <Avatar src={person.avatar} name={name} className="big" dot={app.dot} />
+        </button>
         <div className="grow who-line">
           <div className="name-row">
             <h1>{name}</h1>
@@ -310,7 +423,20 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
         </div>
       )}
 
-      {panel === "look" && <LookPanel person={person} look={look} skin={skin} onChange={setLook} onClose={() => setPanel(null)} />}
+      {panel === "profile" && <ProfilePanel person={person} onSaved={onChanged} onError={setError}
+        onOpen={openPanel} onClose={() => setPanel(null)} />}
+      {panel === "look" && <LookPanel look={look} skin={skin} onChange={setLook} onClose={() => setPanel(null)} />}
+      {panel === "media" && <MediaPanel person={person} onError={setError} onOpenPhoto={setPhoto} onClose={() => setPanel(null)} />}
+      {panel === "memory" && <MemoryPanel person={person} onError={setError} onChanged={onChanged} onClose={() => setPanel(null)} />}
+
+      {find !== null && (
+        <div className="find-bar">
+          <Icon name="search" />
+          <input autoFocus value={find} placeholder={`Search your chat with ${name}`} onChange={(e) => setFind(e.target.value)} />
+          <span className="muted small">{find ? `${shown.length} found` : ""}</span>
+          <button className="ic-btn" aria-label="Close search" onClick={() => setFind(null)}><Icon name="close" /></button>
+        </div>
+      )}
 
       {detected && person.platform && !hideHint && panel !== "look" && (
         <div className="banner">
@@ -327,41 +453,69 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
         </div>
       )}
 
-      <div className="thread" role="log" aria-live="polite">
+      <div className="thread" role="log" aria-live="polite" ref={thread} onScroll={onScroll}>
+        {older && <button className="btn small block older" onClick={loadOlder}>Load earlier messages</button>}
         {loaded && msgs.length === 0 && <p className="empty">Say hello to {name}.</p>}
-        {msgs.map((m, i) => {
-          const prev = msgs[i - 1], next = msgs[i + 1];
+        {find && !shown.length && <p className="empty">Nothing found.</p>}
+        {shown.map((m, i) => {
+          const prev = shown[i - 1], next = shown[i + 1];
+          if (m.kind === "event") return <div className="sep event" key={m.id}><span>{m.text}</span></div>;
           const sep = sepLabel(prev, m, app.seps);
           const nextSep = next ? sepLabel(m, next, app.seps) : null;
           const first = !prev || prev.role !== m.role || !!sep;      // first / last bubble of a run from one sender
           const last = !next || next.role !== m.role || !!nextSep;
           const lastOfGroup = m.role === "person" && last;
-          const isLatest = i === lastIndex;
+          const isLatest = msgs[lastIndex]?.id === m.id;
+          const reacts = Object.values(m.reactions || {});
+          const saved = typeof m.id === "number";
+          const at = find ? msgs.findIndex((x) => x.id === m.id) : i;   // where it really sits in the chat
           return (
             <Fragment key={m.id}>
               {sep && <div className={"sep " + app.seps}><span>{sep}</span></div>}
-              <div className={"bubble-row " + m.role + (first ? " first" : "") + (last ? " last" : "")}>
-                {lastOfGroup && <span className="avatar mini" aria-hidden="true">{initials(name)}</span>}
-                <div className={"bubble " + m.role}>
-                  {m.text}
+              <div className={"bubble-row " + m.role + (first ? " first" : "") + (last ? " last" : "") + (m.media ? " has-media" : "")}>
+                {lastOfGroup && <Avatar src={person.avatar} name={name} className="mini" />}
+                {m.quote && (
+                  <div className="quote" title={m.quote.text}>
+                    <Icon name="reply" />
+                    <span>{m.quote.role === "user" ? "You" : name}: {m.quote.photo && !m.quote.text ? "photo" : m.quote.text}</span>
+                  </div>
+                )}
+                <div className={"bubble " + m.role + (m.deleted ? " unsent" : "") + (m.media?.kind === "image" ? " photo" : "")}
+                  onClick={() => saved && !m.deleted && !String(window.getSelection?.() || "") && setBar(bar === m.id ? null : m.id)}>
+                  {m.deleted ? <i>{m.role === "user" ? "You unsent a message" : `${name} unsent a message`}</i> : <>
+                    {m.media && <MediaBubble media={m.media} onOpen={setPhoto} />}
+                    {m.text}
+                  </>}
                   <span className="meta">{clock(m.created_at)}{m.role === "user" && <Ticks status={m.status} skin={skin} />}</span>
+                  {reacts.length > 0 && <span className="reacts">{reacts.join("")}</span>}
                 </div>
+
+                {bar === m.id && !m.deleted && (
+                  <div className="react-bar" onClick={(e) => e.stopPropagation()}>
+                    {[quick, "❤️", "😂", "😮", "🥹", "😡"].filter((e, k, a) => a.indexOf(e) === k).map((e) => (
+                      <button key={e} className={m.reactions?.user === e ? "on" : ""} onClick={() => toggleReaction(m, e)}>{e}</button>
+                    ))}
+                    <button className="txt" onClick={() => { setReplyTo(m); setBar(null); field.current?.focus(); }}>Reply</button>
+                    {m.role === "user" && <button className="txt" onClick={() => unsend(m)}>Unsend</button>}
+                  </div>
+                )}
+
                 {m.role === "user" && m.status === "failed" && (
                   <button className="receipt failed" onClick={retryFailed}>Not delivered. Tap to try again</button>
                 )}
-                {m.role === "user" && isLatest && m.status !== "failed" && <Receipt m={m} app={app} name={name} />}
+                {m.role === "user" && isLatest && m.status !== "failed" && <Receipt m={m} app={app} name={name} person={person} />}
                 {showWhy && lastOfGroup && m.debug && (
                   <button className="why" aria-expanded={why === m.id} onClick={() => setWhy(why === m.id ? null : m.id)}>why this reply?</button>
                 )}
                 {showWhy && why === m.id && <p className="why-text">{explain(m.debug)}</p>}
-                {lastOfGroup && typeof m.id === "number" && i > 0 && (
+                {lastOfGroup && saved && at > 0 && !m.deleted && (
                   taught[m.id] ? (
                     <p className="teach-done">{taught[m.id] === "good" ? "Noted: sounds like them 👍" : `Saved. Next time ${name} will answer like this.`}</p>
                   ) : fixing === m.id ? (
-                    <form className="teach-fix" onSubmit={(e) => { e.preventDefault(); fixText.trim() && teach(i, m.id, fixText.trim()); }}>
+                    <form className="teach-fix" onSubmit={(e) => { e.preventDefault(); fixText.trim() && teach(at, m.id, fixText.trim()); }}>
                       <textarea autoFocus rows={2} value={fixText} onChange={(e) => setFixText(e.target.value)}
                         placeholder={`What would ${name} really say?`}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fixText.trim() && teach(i, m.id, fixText.trim()); } }} />
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fixText.trim() && teach(at, m.id, fixText.trim()); } }} />
                       <div className="teach-actions">
                         <button type="button" className="link" onClick={() => setFixing(null)}>Cancel</button>
                         <button className="btn small primary" disabled={!fixText.trim()}>Teach</button>
@@ -369,7 +523,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
                     </form>
                   ) : (
                     <div className="teach">
-                      <button title={`This sounds like ${name}`} onClick={() => teach(i, m.id, exchange(i).reply)}>👍</button>
+                      <button title={`This sounds like ${name}`} onClick={() => teach(at, m.id, exchange(at).reply)}>👍</button>
                       <button title={`Teach imy what ${name} would really say`} onClick={() => { setFixing(m.id); setFixText(""); }}>Fix</button>
                     </div>
                   )
@@ -380,7 +534,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
         })}
         {typing && app.typingIn === "thread" && (
           <div className="bubble-row person first last typing-row" aria-label={`${name} is typing`}>
-            <span className="avatar mini" aria-hidden="true">{initials(name)}</span>
+            <Avatar src={person.avatar} name={name} className="mini" />
             <div className="bubble person typing"><i /><i /><i /></div>
           </div>
         )}
@@ -392,19 +546,63 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
           {error} {msgs.some((m) => m.status === "failed") && <button className="link" onClick={retryFailed}>Try again</button>}
         </div>
       )}
+
+      {replyTo && (
+        <div className="replying">
+          <Icon name="reply" />
+          <span className="grow">Replying to {replyTo.role === "user" ? "yourself" : name}: <i>{replyTo.text || "photo"}</i></span>
+          <button className="ic-btn" aria-label="Cancel reply" onClick={() => setReplyTo(null)}><Icon name="close" /></button>
+        </div>
+      )}
+      {(attach.length > 0 || busyUpload) && (
+        <div className="attachments">
+          {attach.map((m) => (
+            <div key={m.id} className="chip-media">
+              {m.kind === "image" ? <img src={m.url} alt="" /> : <span className="file-ic"><Icon name="file" /></span>}
+              <button aria-label="Remove" onClick={() => setAttach((a) => a.filter((x) => x.id !== m.id))}><Icon name="close" /></button>
+            </div>
+          ))}
+          {busyUpload && <span className="muted small">Adding…</span>}
+        </div>
+      )}
+
       <form className="composer" onSubmit={submit}>
-        {app.leftIcons?.map((n) => <span key={n} className="ic"><Icon name={n} /></span>)}
+        <button type="button" className="ic-btn attach" aria-label="Send a photo or file" disabled={busyUpload}
+          onClick={() => picker.current?.click()}>
+          <Icon name={app.leftIcons?.[0] || "plus"} />
+        </button>
+        {app.leftIcons?.slice(1).map((n) => <span key={n} className="ic"><Icon name={n} /></span>)}
+        <input ref={picker} type="file" multiple hidden accept="image/*,video/*,audio/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.csv,.zip"
+          onChange={(e) => { pickFiles(e.target.files); e.target.value = ""; }} />
         <div className="field-wrap">
-          <input ref={field} value={input} onChange={(e) => { setInput(e.target.value); typedAt.current = Date.now(); }}
+          <input ref={field} value={input} onPaste={onPaste}
+            onChange={(e) => { setInput(e.target.value); typedAt.current = Date.now(); }}
             placeholder={app.placeholder || `Message ${name}`} aria-label="Message" autoFocus maxLength={4000} />
           {app.inField && <span className="ic in-field"><Icon name={app.inField} /></span>}
         </div>
-        <button className={"btn primary send" + (input.trim() ? " ready" : "")} aria-label="Send" disabled={!input.trim()}>
-          {skinned ? <Icon name={input.trim() ? app.sendIcon : app.idleIcon} /> : "Send"}
+        <button className={"btn primary send" + (input.trim() || attach.length ? " ready" : "")} aria-label="Send"
+          disabled={!input.trim() && !attach.length}>
+          {skinned ? <Icon name={input.trim() || attach.length ? app.sendIcon : app.idleIcon} /> : "Send"}
         </button>
       </form>
       </>)}
+      <PhotoViewer media={photo} onClose={() => setPhoto(null)} />
     </div>
+  );
+}
+
+/* A shared photo, video, voice note or file inside a bubble. */
+function MediaBubble({ media, onOpen }) {
+  if (media.kind === "image") {
+    return <img className="sent-photo" src={media.url} alt={media.description || "shared photo"} loading="lazy"
+      onClick={(e) => { e.stopPropagation(); onOpen(media); }} />;
+  }
+  if (media.kind === "video") return <video className="sent-photo" src={media.url} controls preload="metadata" />;
+  if (media.kind === "audio") return <audio className="sent-audio" src={media.url} controls preload="metadata" />;
+  return (
+    <a className="file-row" href={media.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+      <Icon name="file" /><span>{media.filename}</span><small>{kb(media.bytes || 0)}</small>
+    </a>
   );
 }
 
@@ -415,11 +613,11 @@ function Ticks({ status, skin }) {
 }
 
 /* Under your latest message: how each app shows it was read. */
-function Receipt({ m, app, name }) {
+function Receipt({ m, app, name, person }) {
   switch (app.receipt) {
     case "avatar":
       return m.status === "seen"
-        ? <span className="receipt seen-av" title={`Seen by ${name}`}><span className="avatar">{initials(name)}</span></span>
+        ? <span className="receipt seen-av" title={`Seen by ${name}`}><Avatar src={person.avatar} name={name} /></span>
         : <span className="receipt sent-dot" title="Sent">✓</span>;
     case "delivered":
       return <span className="receipt">{m.status === "seen" ? `Read ${clock(m.seenAt || m.created_at)}` : "Delivered"}</span>;
@@ -428,36 +626,4 @@ function Receipt({ m, app, name }) {
     default:
       return null;
   }
-}
-
-/* "Chat look": which app the chat looks like, light/dark, and whether to copy your screenshots' colours. */
-function LookPanel({ person, look, skin, onChange, onClose }) {
-  const pref = look.pref_mode || "auto";
-  return (
-    <div className="style-panel look-panel">
-      <p className="small"><strong>Make it look like</strong></p>
-      <div className="chips">
-        {PLATFORMS.map((p) => (
-          <button key={p.id || "imy"} className={"chip" + (skin === p.id ? " on" : "")} onClick={() => onChange({ platform: p.id })}>
-            {p.id ? p.label : "imy"}{look.detected === p.id && p.id ? " · from your screenshots" : ""}
-          </button>
-        ))}
-      </div>
-      <p className="small"><strong>Light or dark</strong></p>
-      <div className="chips">
-        {[["auto", look.mode ? `Like my screenshots (${look.mode})` : "Same as imy"], ["light", "Light"], ["dark", "Dark"]].map(([id, label]) => (
-          <button key={id} className={"chip" + (pref === id ? " on" : "")} onClick={() => onChange({ mode: id })}>{label}</button>
-        ))}
-      </div>
-      {look.user && (
-        <label className="check">
-          <input type="checkbox" checked={look.use_colors !== false} onChange={(e) => onChange({ colors: e.target.checked })} />
-          Use the bubble colours from my screenshots
-          <span className="swatch" style={{ background: look.user_top ? `linear-gradient(${look.user_top}, ${look.user_bottom})` : look.user }} />
-          <span className="swatch" style={{ background: look.them }} />
-        </label>
-      )}
-      <div className="actions"><button className="btn small" onClick={onClose}>Done</button></div>
-    </div>
-  );
 }

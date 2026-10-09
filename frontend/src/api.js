@@ -15,17 +15,27 @@ async function handle(res) {
   try { data = await res.json(); } catch { /* not JSON, e.g. a hosting error page */ }
   if (!res.ok) {
     const detail = data && typeof data.detail === "string" ? data.detail : null;
+    // 401 means the session ended (signed out elsewhere, or it simply expired after 30 days).
+    // Tell the app so it can show the sign-in page instead of a wall of errors.
+    if (res.status === 401 && !res.url.includes("/api/auth/sign")) onSignedOut();
     throw new Error(detail || FRIENDLY[res.status] || `Request failed (${res.status}).`);
   }
   if (data === null) throw new Error("imy sent back something unexpected. Try again.");
   return data;
 }
 
+// When a request comes back "not signed in", the whole app needs to know, not just the screen that
+// asked. App.jsx registers here and shows the sign-in page.
+let onSignedOut = () => {};
+export const whenSignedOut = (fn) => { onSignedOut = fn; };
+
 async function request(url, options = {}, timeoutMs = 30000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await handle(await fetch(url, { ...options, signal: ctrl.signal }));
+    // credentials: the sign-in cookie must go with every request, including from the dev server,
+    // which runs on a different port and so counts as a different origin.
+    return await handle(await fetch(url, { ...options, credentials: "include", signal: ctrl.signal }));
   } catch (err) {
     if (err.name === "AbortError") throw new Error("That took too long. Check your connection and try again.");
     if (err instanceof TypeError) throw new Error("Can't reach imy right now. Check your connection.");
@@ -51,6 +61,15 @@ const form = (url, fields, timeoutMs) => {
 export const api = {
   health: () => send("GET", "/api/health", null, 8000),
   status: () => send("GET", "/api/status"),
+
+  // Accounts. The server replies with a cookie; the browser sends it back by itself after that.
+  me: () => send("GET", "/api/auth/me"),
+  signUp: (email, password, is_adult) => send("POST", "/api/auth/signup", { email, password, is_adult }),
+  signIn: (email, password) => send("POST", "/api/auth/signin", { email, password }),
+  signOut: () => send("POST", "/api/auth/signout"),
+  changePassword: (old_password, new_password) => send("PUT", "/api/auth/password", { old_password, new_password }),
+  deleteAccount: (password, confirm) => send("DELETE", "/api/auth/account", { password, confirm }),
+
   questions: () => send("GET", "/api/questions"),
   persons: () => send("GET", "/api/persons"),
   person: (id) => send("GET", `/api/persons/${id}`),
@@ -59,6 +78,10 @@ export const api = {
   deletePerson: (id) => send("DELETE", `/api/persons/${id}`),
   setLlm: (id, use_llm) => send("PUT", `/api/persons/${id}/settings`, { use_llm }),
   setLook: (id, look) => send("PUT", `/api/persons/${id}/look`, look),   // { platform?, mode?, colors? }
+  // Profile picture, nicknames and chat colour: what you'd change by tapping a name in Messenger.
+  setProfile: (id, patch) => send("PUT", `/api/persons/${id}/profile`, patch),   // { nick_them?, nick_me?, color?, emoji? }
+  setAvatar: (id, file, who = "person") => form(`/api/persons/${id}/avatar?who=${who}`, { file }, 60000),
+  clearAvatar: (id, who = "person") => send("DELETE", `/api/persons/${id}/avatar?who=${who}`),
 
   screenshots: (id) => send("GET", `/api/persons/${id}/screenshots`),
   upload: (id, files) => form(`/api/persons/${id}/screenshots`, { files }, 180000),
@@ -74,10 +97,18 @@ export const api = {
   deleteMessage: (mid) => send("DELETE", `/api/messages/${mid}`),
   mergeUp: (mid) => send("POST", `/api/messages/${mid}/merge-up`),
 
-  chat: (id) => send("GET", `/api/persons/${id}/chat`),
-  say: (id, message) => send("POST", `/api/persons/${id}/chat`, { message }, 45000),
-  sayMany: (id, messages) => send("POST", `/api/persons/${id}/chat`, { messages }, 45000),   // a burst, answered together
-  clearChat: (id) => send("DELETE", `/api/persons/${id}/chat`),
+  // The conversation is kept on the server, newest page first; `before` loads the older messages.
+  chat: (id, before) => send("GET", `/api/persons/${id}/chat` + (before ? `?before=${before}` : "")),
+  say: (id, message, extra = {}) => send("POST", `/api/persons/${id}/chat`, { message, ...extra }, 45000),
+  sayMany: (id, messages, extra = {}) => send("POST", `/api/persons/${id}/chat`, { messages, ...extra }, 60000),
+  clearChat: (id, media = false) => send("DELETE", `/api/persons/${id}/chat` + (media ? "?media=1" : "")),
+  // Photos and files shared in the chat (uploaded first, so you can see them before you send).
+  uploadMedia: (id, files) => form(`/api/persons/${id}/media`, { files }, 180000),
+  mediaList: (id) => send("GET", `/api/persons/${id}/media`),
+  react: (mid, emoji, who = "user") => send("POST", `/api/chat-messages/${mid}/react`, { emoji, who }),
+  unsend: (mid) => send("DELETE", `/api/chat-messages/${mid}`),
+  memory: (id) => send("GET", `/api/persons/${id}/memory`),       // what they remember from your chats
+  clearMemory: (id) => send("DELETE", `/api/persons/${id}/memory`),
   style: (id) => send("GET", `/api/persons/${id}/style`),
   guesses: (id) => send("GET", `/api/persons/${id}/guesses`),   // "imy noticed…" cards for the interview
   teach: (id, prompt, reply) => send("POST", `/api/persons/${id}/teach`, { prompt, reply }),   // 👍 / Fix from the chat

@@ -1,10 +1,10 @@
 import ThemeSwitch from "./ThemeSwitch";
+import Avatar, { initials } from "./Avatar";
+import Account from "./Account";
 
-export function initials(name = "") {
-  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "?";
-}
+export { initials };   // other screens still import it from here
 
-export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onTheme }) {
+export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onTheme, user, onSignedOut }) {
   return (
     <aside className="sidebar">
       <a className="brand" href="/landing.html" title="About IMY" style={{ color: "inherit", textDecoration: "none" }}>
@@ -23,7 +23,7 @@ export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onT
         {persons.length === 0 && <p className="muted small">No one yet. Create a person to get started.</p>}
         {persons.map((p) => (
           <button key={p.id} className={"person-btn" + (p.id === activeId ? " active" : "")} onClick={() => onSelect(p.id)}>
-            <span className="avatar">{initials(p.nickname || p.name)}</span>
+            <Avatar src={p.avatar} name={p.nickname || p.name} />
             <span className="person-text">
               <strong>{p.nickname || p.name}</strong>
               <small>{p.person_message_count} of their messages learned</small>
@@ -33,6 +33,7 @@ export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onT
       </nav>
       <span className="grow" />
       <ThemeSwitch theme={theme} onChange={onTheme} />
+      <Account user={user} onSignedOut={onSignedOut} />
     </aside>
   );
 }

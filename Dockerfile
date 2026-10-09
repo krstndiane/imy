@@ -25,5 +25,9 @@ VOLUME /data
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request,os; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8000\")}/api/health')"
 
-# One worker: imy keeps each person's model in memory and uses SQLite. It handles many chats at once with threads.
+# One worker on purpose - don't add --workers. imy keeps each person's model in memory, and it
+# orders database writes into a fair queue inside the process (see backend/db.py). A second worker
+# has its own queue and its own copy of every model, so writes would go back to fighting each other
+# and memory would double. Measured: one worker is comfortable with ~150 people chatting at once.
+# To grow past that, move the database to Postgres first, then add workers.
 CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*' --timeout-keep-alive 30"]
