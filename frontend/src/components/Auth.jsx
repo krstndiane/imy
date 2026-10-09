@@ -5,7 +5,8 @@ import { api } from "../api";
 
    One form that does both jobs - make an account or sign in - because two separate pages for four
    fields is more work for the person than it's worth. Making an account also asks you to confirm
-   you're 18 or over: the AI services imy uses set that limit in their own terms. */
+   you're 18 or over (the AI services imy uses set that limit in their own terms) and to agree to
+   the Terms; the server records which version and when. */
 export default function Auth({ onSignedIn }) {
   const [mode, setMode] = useState("in");      // "in" = sign in, "up" = make an account
   const [email, setEmail] = useState("");
@@ -75,7 +76,8 @@ export default function Auth({ onSignedIn }) {
             <label className="check">
               <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} />
               <span>
-                I'm 18 or over, these are chats I was part of, and I've read the{" "}
+                I'm 18 or over, and I agree to the{" "}
+                <a href="/terms.html" target="_blank" rel="noreferrer">Terms</a> and the{" "}
                 <a href="/privacy.html" target="_blank" rel="noreferrer">privacy page</a>.
               </span>
             </label>
@@ -97,8 +99,9 @@ export default function Auth({ onSignedIn }) {
       </div>
 
       <p className="fine auth-fine">
-        imy copies writing patterns from the messages you give it. It isn't them.{" "}
-        <a href="/privacy.html" target="_blank" rel="noreferrer">What imy stores</a>
+        imy copies writing patterns from the messages you give it. Replies are written by AI. It isn't them.{" "}
+        <a href="/privacy.html" target="_blank" rel="noreferrer">What imy stores</a>{" · "}
+        <a href="/terms.html" target="_blank" rel="noreferrer">Terms</a>
       </p>
     </div>
   );

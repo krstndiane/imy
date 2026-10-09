@@ -14,6 +14,7 @@ every reply, which is why they can bring things up later.
 It runs in the background after a reply has already been sent, so it never makes a reply slower, and
 if the AI is busy or switched off nothing happens - the chat just works without the extra memory.
 """
+import contextvars
 import json
 import threading
 
@@ -107,6 +108,10 @@ def update(pid: int, name: str) -> None:
 
 
 def update_later(pid: int, name: str) -> None:
-    """Start the update in the background, after the reply has gone out."""
+    """Start the update in the background, after the reply has gone out.
+
+    The thread runs in a copy of this request's context, so it still knows whose chat this is:
+    that's how the AI it uses is counted against the right account (see usage.py)."""
     if llm.enabled():
-        threading.Thread(target=update, args=(pid, name), daemon=True).start()
+        ctx = contextvars.copy_context()
+        threading.Thread(target=ctx.run, args=(update, pid, name), daemon=True).start()

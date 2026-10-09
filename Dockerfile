@@ -2,7 +2,7 @@
 #   docker build -t imy .
 #   docker run -p 8000:8000 -v imy-data:/data --env-file .env imy
 # Works on any host that runs Docker (Render, Railway, Fly.io, a VPS...). Keep /data on a persistent
-# disk/volume: it holds the database and uploaded screenshots.
+# disk/volume: it holds the database and uploaded screenshots. Before launch: python -m backend.preflight
 FROM python:3.12-slim
 
 RUN apt-get update \
@@ -16,8 +16,10 @@ RUN pip install --no-cache-dir -r backend/requirements-deploy.txt
 COPY backend backend
 COPY frontend/dist frontend/dist
 
+# Backups on by default in the container: any copy real people use should have them.
 ENV IMY_DATA_DIR=/data \
     IMY_EMBEDDER=tfidf \
+    IMY_BACKUP_DAILY=1 \
     TZ=Asia/Manila \
     PORT=8000 \
     PYTHONUNBUFFERED=1

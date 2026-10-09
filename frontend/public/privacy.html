@@ -1,16 +1,14 @@
 <!doctype html>
-<!-- BEFORE YOU PUBLISH: put your real contact email in the "Getting in touch" section below. -->
+<!-- The contact address is filled in by the server from IMY_CONTACT_EMAIL wherever this page says
+     {{CONTACT_EMAIL}} (see backend/main.py). Set it in your host's settings before you go live. -->
 <html lang="en" class="scroll-smooth">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Privacy — IMY</title>
   <meta name="description" content="What imy stores, who can see it, and how to delete it." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <!-- Styled on its own, with no CDN: a page explaining what happens to people's data has to stay
-       readable even when an outside script can't load. -->
+  <!-- Styled on its own, with no CDN and no web fonts: a page explaining what happens to people's
+       data shouldn't itself send their browser to anyone else's servers. -->
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #0a0a0c; color: #e7ecf3; overflow-x: hidden;
@@ -59,13 +57,13 @@
 
   <main class="wrap">
     <h1>Privacy</h1>
-    <p class="stamp">Last updated: 9 October 2026</p>
+    <p class="stamp">Last updated: 10 October 2026</p>
 
     <div class="card">
-      <p><strong>The short version.</strong> imy keeps the chats you upload so it can
-      learn how someone writes. Only your account can see them. The text needed to write a reply is sent to an
-      AI company to produce that reply. You can delete any person, or your whole account and everything in it,
-      at any time, and it's really gone. imy is for people aged 18 and over.</p>
+      <p><strong>The short version.</strong> Your chats, photos and memory notes are only visible to your
+      account. When imy writes a reply, the recent messages and any photo you share are sent to our AI provider
+      (Groq) to produce it. We don't share them with anyone else, and deleting your account removes them from imy.
+      imy is for people aged 18 and over.</p>
     </div>
 
     <h2>What imy stores</h2>
@@ -83,12 +81,17 @@
         so replies can refer back to them. You can read and clear these in the chat menu.</li>
       <li><strong>One cookie</strong> that keeps you signed in. That's the only cookie. There is no advertising,
         no analytics and no tracking of any kind.</li>
+      <li><strong>When you agreed</strong> to the Terms, and when you confirmed a chat was one you were part of.</li>
+      <li><strong>A daily count</strong> of how many AI replies your account used — just the number, not the
+        messages.</li>
     </ul>
 
     <h2>Who can see it</h2>
     <p>Only you, from your account. Every person you set up belongs to that account, and no other account can
-    open them, read their messages or load their photos. Whoever runs this copy of imy has access to the server
-    it runs on, which is true of every website.</p>
+    open them, read their messages or load their photos — not through the website, and not by guessing the
+    address of a file.</p>
+    <p>Whoever runs imy can technically reach the server, its database and its backups, as with any website. Your
+    data is not sold, not used for advertising, and not shared with anyone apart from the AI provider below.</p>
 
     <h2>The AI that writes the replies</h2>
     <p>imy can answer on its own from patterns in the messages you uploaded. When a reply needs real
@@ -99,9 +102,13 @@
       <li>the last few messages of your conversation;</li>
       <li>a photo you share in a chat, so the reply can be about the photo.</li>
     </ul>
-    <p>Your email address, your password and your uploaded screenshot <em>images</em> are never sent. Groq states
-    that it does not use data sent through its API to train its models. If Gemini has been switched on by whoever
-    runs this site, Google's terms for the plan in use apply.</p>
+    <p>Your email address, your password and your uploaded screenshot <em>images</em> are never sent. Groq says
+    that by default it doesn't keep what's sent to it; it may keep it for up to 30 days to investigate errors or
+    abuse unless that's switched off, and it processes it in the United States
+    (<a href="https://console.groq.com/docs/your-data" rel="noreferrer">Groq: your data</a>). If Gemini has been
+    switched on by whoever runs this site, Google's terms for the plan in use apply.</p>
+    <p>Each account can use the AI a set number of times a day. After that, replies are written by imy itself from
+    the messages you uploaded, without sending anything out.</p>
 
     <h2>Deleting things</h2>
     <ul>
@@ -112,8 +119,8 @@
       <li><strong>Everything:</strong> your account menu → Delete everything. This removes your account, every
         person, every message and every uploaded file from the server. It cannot be undone.</li>
     </ul>
-    <p>Deleted means deleted — not hidden. Backups made before a deletion may still hold the data for a short
-    time until they age out.</p>
+    <p>Deleted means deleted — not hidden. Backups made before a deletion may still hold the data until they age
+    out, which takes about a week.</p>
 
     <h2>The person you're copying</h2>
     <p>This matters more than anything else on this page. imy learns from conversations involving a real person
@@ -139,8 +146,7 @@
 
     <h2>Getting in touch</h2>
     <p>For anything on this page — a question, a deletion request, or a complaint:</p>
-    <p class="contact"><strong>[Add your contact email here before you publish
-    this page.]</strong></p>
+    <p class="contact"><strong>{{CONTACT_EMAIL}}</strong></p>
 
     <h2>Changes</h2>
     <p>If what imy stores or sends changes, this page changes with it, and the date at the top is updated.</p>
@@ -149,7 +155,7 @@
   <footer>
     <div class="wrap">
       <p>© <span id="year"></span> IMY. Preserving your peace of mind.</p>
-      <a href="/landing.html">Back to the homepage</a>
+      <span><a href="/terms.html">Terms</a> · <a href="/landing.html">Back to the homepage</a></span>
     </div>
   </footer>
   <script>document.getElementById('year').textContent = new Date().getFullYear();</script>

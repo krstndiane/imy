@@ -1,6 +1,6 @@
 """db.py - SQLite storage.
 
-Seven tables:
+Eight tables (the eighth, ai_usage, counts AI use per account per day - see usage.py):
   users         one row per account; `sessions` is how a browser stays signed in (see auth.py)
   sessions      live sign-ins, as hashes of the cookie token
   persons       one row per person you've set up (+ their interview answers as JSON), owned by a user
@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS media (
   sender TEXT NOT NULL DEFAULT 'user',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_usage (
+  day TEXT NOT NULL,                    -- local date, YYYY-MM-DD
+  user_id INTEGER NOT NULL,             -- 0 = not signed in (tests, scripts)
+  seen INTEGER NOT NULL DEFAULT 0,      -- AI replies + photo looks: what the daily limit counts
+  other INTEGER NOT NULL DEFAULT 0,     -- background work like memory notes
+  PRIMARY KEY (day, user_id)
+);
 CREATE INDEX IF NOT EXISTS idx_messages_person ON messages(person_id, screenshot_id, position);
 CREATE INDEX IF NOT EXISTS idx_chat_person ON chat_messages(person_id, id);
 CREATE INDEX IF NOT EXISTS idx_media_person ON media(person_id, id);
@@ -122,6 +129,13 @@ MIGRATIONS = [
     # Who this person belongs to. Empty in copies of imy from before accounts existed: the first
     # account created adopts them (see auth.create_user), so nothing is lost when you upgrade.
     ("persons", "user_id", "INTEGER REFERENCES users(id) ON DELETE CASCADE"),
+    # Which version of the Terms an account agreed to at sign-up, and when. Empty for accounts made
+    # before there were Terms.
+    ("users", "terms_version", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "terms_at", "TEXT"),
+    # When the account confirmed these are conversations they were part of and won't be used to
+    # pretend to be this person to anyone else (asked when a person is added).
+    ("persons", "consent_at", "TEXT"),
 ]
 
 

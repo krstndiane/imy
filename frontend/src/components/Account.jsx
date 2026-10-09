@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 
 /* The account button at the bottom of the sidebar: who you're signed in as, signing out,
    changing your password, and deleting everything.
 
    "Delete everything" asks for the password and the typed word DELETE, because it really does
-   remove every person, message and photo, and there is no undo. */
+   remove every person, message and photo, and there is no undo.
+
+   The menu also shows how many AI replies you've used today. Each account gets a fair share of the
+   site's daily AI allowance (IMY_AI_DAILY_PER_ACCOUNT); past it, replies still come, written by imy
+   from their messages instead. */
 export default function Account({ user, onSignedOut }) {
   const [open, setOpen] = useState(null);   // null | "menu" | "password" | "delete"
   const [busy, setBusy] = useState(false);
@@ -15,6 +19,14 @@ export default function Account({ user, onSignedOut }) {
   const [newPw, setNewPw] = useState("");
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [ai, setAi] = useState(null);       // {used, limit} for today, fetched when the menu opens
+
+  useEffect(() => {
+    if (open !== "menu") return;
+    let live = true;
+    api.me().then((r) => live && setAi(r.user?.ai_today || null)).catch(() => {});
+    return () => { live = false; };
+  }, [open]);
 
   const close = () => { setOpen(null); setError(""); setNote(""); setOldPw(""); setNewPw(""); setPw(""); setConfirm(""); };
 
@@ -87,9 +99,21 @@ export default function Account({ user, onSignedOut }) {
         <div className="style-panel">
           {error && <p className="banner warn" role="alert">{error}</p>}
           {note && <p className="small">{note}</p>}
+          {ai && ai.limit > 0 && (
+            <div className="ai-today" aria-label={`AI replies today: ${ai.used} of ${ai.limit}`}>
+              <span className="small">AI replies today <strong>{Math.min(ai.used, ai.limit)} of {ai.limit}</strong></span>
+              <div className="bar"><div style={{ width: Math.min(100, (100 * ai.used) / ai.limit) + "%" }} /></div>
+              <span className="fine">
+                {ai.used >= ai.limit
+                  ? "Used up for today. Replies still come, written by imy from their messages. Back at midnight."
+                  : "Resets at midnight. After that, replies come from imy itself."}
+              </span>
+            </div>
+          )}
           <div className="actions column">
             <button className="btn small" onClick={() => { setOpen("password"); setError(""); }}>Change password</button>
             <a className="btn small" href="/privacy.html" target="_blank" rel="noreferrer">What imy stores</a>
+            <a className="btn small" href="/terms.html" target="_blank" rel="noreferrer">Terms</a>
             <button className="btn small" onClick={signOut} disabled={busy}>Sign out</button>
             <button className="btn small ghost danger" onClick={() => { setOpen("delete"); setError(""); }}>
               Delete everything

@@ -455,6 +455,11 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
 
       <div className="thread" role="log" aria-live="polite" ref={thread} onScroll={onScroll}>
         {older && <button className="btn small block older" onClick={loadOlder}>Load earlier messages</button>}
+        {/* At the very top of the conversation, the way Messenger shows its encryption note:
+            a plain reminder of what this is. */}
+        {loaded && !older && !find && (
+          <div className="sep event ai-note"><span>Replies are written by AI from {name}'s old messages. It isn't really {name}.</span></div>
+        )}
         {loaded && msgs.length === 0 && <p className="empty">Say hello to {name}.</p>}
         {find && !shown.length && <p className="empty">Nothing found.</p>}
         {shown.map((m, i) => {

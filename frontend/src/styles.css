@@ -624,3 +624,12 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .swatch-btn.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--solid) inset; }
 .swatch-btn.none { background: linear-gradient(135deg, #7c8aa0 50%, #c9d2e0 50%); }
 .chip.emoji { font-size: 1.05rem; padding: 4px 9px; }
+
+/* account menu: today's AI replies */
+.ai-today { display: grid; gap: 4px; margin: 0 0 10px; }
+.ai-today .bar { margin-top: 2px; }
+.ai-today .fine { font-size: .74rem; line-height: 1.35; color: var(--muted); }
+/* "these are conversations I was part of" when adding someone */
+.check.consent { margin: 14px 0 0; padding: 12px; border-radius: 12px; background: var(--soft); font-size: .86rem; }
+/* the reminder at the top of a chat that the replies are written by AI */
+.sep.event.ai-note span { max-width: 32em; text-align: center; line-height: 1.35; }

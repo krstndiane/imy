@@ -100,7 +100,7 @@ def test_changing_the_password_ends_other_sessions():
 def test_you_only_see_your_own_people():
     auth, main = fresh()
     as_user(auth, "diane@example.com")
-    mine = main.create_person(main.AnswersIn(answers={"q1": "Lawrence"}))
+    mine = main.create_person(main.NewPersonIn(answers={"q1": "Lawrence"}, consent=True))
     assert len(main.list_persons()) == 1
 
     as_user(auth, "someone@example.com")                                 # a different account
@@ -119,7 +119,7 @@ def test_you_only_see_your_own_people():
 def test_screenshots_and_messages_are_protected_too():
     auth, main = fresh()
     as_user(auth, "diane@example.com")
-    p = main.create_person(main.AnswersIn(answers={"q1": "Lawrence"}))
+    p = main.create_person(main.NewPersonIn(answers={"q1": "Lawrence"}, consent=True))
     main.import_text(p["id"], main.TextImportIn(text="Lawrence: hoy\nMe: hi\n", person_name="Lawrence"))
     shot = main.list_screenshots(p["id"])[0]
     msg = shot["messages"][0]
@@ -143,9 +143,9 @@ def test_screenshots_and_messages_are_protected_too():
 def test_merging_cannot_pull_in_someone_elses_person():
     auth, main = fresh()
     as_user(auth, "diane@example.com")
-    hers = main.create_person(main.AnswersIn(answers={"q1": "Lawrence"}))
+    hers = main.create_person(main.NewPersonIn(answers={"q1": "Lawrence"}, consent=True))
     as_user(auth, "someone@example.com")
-    theirs = main.create_person(main.AnswersIn(answers={"q1": "Someone"}))
+    theirs = main.create_person(main.NewPersonIn(answers={"q1": "Someone"}, consent=True))
     with pytest.raises(main.HTTPException) as got:
         main.merge_person(theirs["id"], main.MergeIn(from_id=hers["id"]))
     assert got.value.status_code == 404
@@ -176,7 +176,7 @@ def test_the_first_account_adopts_people_from_before_accounts_existed():
 def test_deleting_the_account_removes_everything():
     auth, main = fresh()
     user = as_user(auth, "diane@example.com")
-    p = main.create_person(main.AnswersIn(answers={"q1": "Lawrence"}))
+    p = main.create_person(main.NewPersonIn(answers={"q1": "Lawrence"}, consent=True))
     main.import_text(p["id"], main.TextImportIn(text="Lawrence: hoy\nMe: hi\n", person_name="Lawrence"))
     main.send_chat(p["id"], main.ChatIn(message="hello"))
     main.delete_account(main.DeleteAccountIn(password="testing12345", confirm="DELETE"))

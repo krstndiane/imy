@@ -1,0 +1,142 @@
+<!doctype html>
+<!-- Plain-language Terms written for imy. They are a starting point, not legal advice: have someone
+     who knows Philippine law (the Data Privacy Act of 2012 especially) read them before you charge money.
+     When you change them, change TERMS_VERSION in backend/auth.py so new sign-ups record the new version.
+     {{CONTACT_EMAIL}} is filled in by the server from IMY_CONTACT_EMAIL. -->
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Terms — IMY</title>
+  <meta name="description" content="The rules for using imy, in plain words." />
+  <!-- Styled on its own, with no CDN and no web fonts: a page explaining what happens to people's
+       data shouldn't itself send their browser to anyone else's servers. -->
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0a0a0c; color: #e7ecf3; overflow-x: hidden;
+           font-family: Inter, 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+           -webkit-font-smoothing: antialiased; }
+    a { color: #60a5fa; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+    .ambient { position: fixed; border-radius: 50%; background: #0052FF; filter: blur(120px); opacity: .2;
+               pointer-events: none; width: 520px; height: 520px; top: -200px; left: -140px; z-index: 0; }
+    header { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid rgba(255,255,255,.08);
+             background: rgba(10,10,12,.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    header .wrap { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; padding-bottom: 14px; }
+    .brandmark { font-size: 1.1rem; font-weight: 800; letter-spacing: -.02em; color: #fff; text-decoration: none; }
+    .openlink { font-size: .88rem; color: #94A3B8; text-decoration: none; }
+    .openlink:hover { color: #fff; }
+    main { position: relative; z-index: 1; padding: 44px 0 20px; }
+    h1 { font-size: clamp(2rem, 6vw, 2.6rem); font-weight: 800; letter-spacing: -.025em; margin: 0 0 .2rem; color: #fff; }
+    .stamp { color: #94A3B8; margin: 0 0 1.6rem; }
+    .card { background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09);
+            border-radius: 16px; padding: 18px 20px; }
+    .card p { color: #fff; margin: 0; }
+    h2 { font-size: 1.3rem; font-weight: 700; color: #fff; margin: 2.4rem 0 .5rem; letter-spacing: -.01em; }
+    p, li { color: #cbd5e1; line-height: 1.68; }
+    p { margin: .6rem 0; }
+    ul { margin: .6rem 0; padding-left: 1.25rem; }
+    li { margin: .35rem 0; }
+    strong { color: #fff; }
+    .contact { display: inline-block; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09);
+               border-radius: 12px; padding: 10px 16px; }
+    footer { border-top: 1px solid rgba(255,255,255,.08); margin-top: 48px; position: relative; z-index: 1; }
+    footer .wrap { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+                   padding-top: 26px; padding-bottom: 26px; font-size: .88rem; color: #94A3B8; }
+    footer a { color: #94A3B8; text-decoration: none; }
+    footer a:hover { color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+
+  <header>
+    <div class="wrap">
+      <a href="/landing.html" class="brandmark">IMY</a>
+      <a href="/" class="openlink">Open imy →</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1>Terms</h1>
+    <p class="stamp">Last updated: 10 October 2026</p>
+
+    <div class="card">
+      <p><strong>The short version.</strong> imy is for adults, for your own private use. Only upload conversations
+      you were part of. Never use it to pretend to be someone to anyone else. Its replies are written by AI from old
+      messages — they are not the real person, and they can be wrong.</p>
+    </div>
+
+    <h2>Who can use imy</h2>
+    <ul>
+      <li>You must be <strong>18 or over</strong>. The AI services imy relies on set that limit in their own terms.</li>
+      <li>One account is for one person. Keep your password to yourself; you're responsible for what happens in
+        your account.</li>
+    </ul>
+
+    <h2>What you upload</h2>
+    <ul>
+      <li>Only upload <strong>conversations you were part of</strong> — chats between you and the person you're
+        setting up. You confirm this each time you add someone.</li>
+      <li>Don't upload other people's private chats, anything involving someone under 18 in a sexual way, or
+        anything that's illegal to have or share.</li>
+      <li>What you upload stays yours. You let imy store it and use it to write replies for you, and nothing else
+        (see <a href="/privacy.html">Privacy</a> for exactly what's sent where).</li>
+    </ul>
+
+    <h2>How you may use it</h2>
+    <ul>
+      <li><strong>For yourself only.</strong> Don't use imy to message, fool or impersonate anyone — not the person
+        you set up, not their friends or family, not anyone.</li>
+      <li>Don't share its replies as if the real person wrote them, or use them to embarrass, harass, threaten or
+        pressure anyone.</li>
+      <li>Don't try to reach other people's accounts or data, overload the site, or get around its limits.</li>
+    </ul>
+
+    <h2>What the replies are</h2>
+    <ul>
+      <li>Replies are written by AI, based on how the person wrote in the messages you gave it. <strong>It isn't
+        them.</strong> It doesn't know what they think now or what they would really say.</li>
+      <li>Replies can be wrong, out of date or out of character. Don't rely on them for medical, legal, money or
+        safety decisions.</li>
+      <li>Each account gets a daily number of AI replies. After that, replies are written by imy itself until
+        midnight.</li>
+    </ul>
+
+    <h2>The person you're copying</h2>
+    <p>They aren't here to agree to this, so imy asks you to treat their words with care. If you are someone who has
+    been copied and you want that removed, contact us below and it will be deleted.</p>
+
+    <h2>Looking after yourself</h2>
+    <p>imy can help keep a voice close. It can also make missing someone harder. If it starts to hurt more than it
+    helps, step away and talk to someone you trust. In the Philippines, the National Center for Mental Health crisis
+    line is <strong>1553</strong>.</p>
+
+    <h2>Ending things</h2>
+    <ul>
+      <li>You can delete any person, or your whole account and everything in it, at any time from the account menu.</li>
+      <li>Accounts that break these rules may be suspended or removed, along with what's in them.</li>
+    </ul>
+
+    <h2>No guarantees</h2>
+    <p>imy is offered as it is. It may be down sometimes, features may change, and it could stop running. We'll do
+    our best to keep your data safe and backed up, but please keep your own copies of anything that matters to you —
+    imy isn't a place to store the only copy of a conversation.</p>
+
+    <h2>Changes</h2>
+    <p>If these rules change in a way that matters, the date at the top changes, and the version you agreed to is
+    kept with your account.</p>
+
+    <h2>Getting in touch</h2>
+    <p class="contact"><strong>{{CONTACT_EMAIL}}</strong></p>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>© <span id="year"></span> IMY. Preserving your peace of mind.</p>
+      <span><a href="/privacy.html">Privacy</a> · <a href="/landing.html">Back to the homepage</a></span>
+    </div>
+  </footer>
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

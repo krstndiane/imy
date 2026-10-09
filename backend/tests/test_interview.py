@@ -55,8 +55,8 @@ def test_fixes_from_the_chat_and_merging(tmp_path=None, monkeypatch=None):
     # Everyone's data belongs to an account now. Calling the API straight from a test skips the
     # sign-in cookie, so say who's asking, the way the middleware normally would.
     auth.CURRENT.set(auth.create_user("test@example.com", "testing12345", True))
-    a = main.create_person(main.AnswersIn(answers={"q1": "Sam", "q3": "bebe"}))
-    b = main.create_person(main.AnswersIn(answers={"q1": "Sam", "q6": "makulit, loyal, chill"}))
+    a = main.create_person(main.NewPersonIn(answers={"q1": "Sam", "q3": "bebe"}, consent=True))
+    b = main.create_person(main.NewPersonIn(answers={"q1": "Sam", "q6": "makulit, loyal, chill"}, consent=True))
     main.teach(a["id"], main.TeachIn(prompt="pagod ako", reply="pahinga ka muna bebe"))
     out = main.teach(a["id"], main.TeachIn(prompt="ingat", reply="ikaw din\nchat ka pag uwi"))
     assert out["taught"] == 2

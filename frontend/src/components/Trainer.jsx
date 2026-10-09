@@ -40,6 +40,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved, theme, on
   const [flagged, setFlagged] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [consent, setConsent] = useState(!!personId);   // asked once, when someone new is added
 
   useEffect(() => {
     api.questions().then(setQuestions).catch((e) => setError(e.message));
@@ -59,7 +60,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved, theme, on
   async function saveAnswers(next = answers) {
     setBusy(true); setError("");
     try {
-      const saved = pid ? await api.updatePerson(pid, next, platform ?? "") : await api.createPerson(next, platform ?? "");
+      const saved = pid ? await api.updatePerson(pid, next, platform ?? "") : await api.createPerson(next, platform ?? "", consent);
       setPid(saved.id);
       setPersonMsgs(saved.person_message_count);
       onSaved?.();   // refresh the sidebar list
@@ -120,7 +121,8 @@ export default function Trainer({ personId, onDone, onCancel, onSaved, theme, on
 
       {step === 0 && (
         <PlatformPicker value={platform} onChange={setPlatform} theme={theme} onTheme={onTheme}
-          footer={<button className="btn primary" disabled={busy || platform === null} onClick={pickPlatform}>Continue</button>} />
+          consent={pid ? null : { value: consent, onChange: setConsent }}
+          footer={<button className="btn primary" disabled={busy || platform === null || !consent} onClick={pickPlatform}>Continue</button>} />
       )}
       {step === 1 && (
         <Deck key="basics" cards={basicsCards} answers={answers} setAnswers={setAnswers} personName={personName}
@@ -153,7 +155,7 @@ export default function Trainer({ personId, onDone, onCancel, onSaved, theme, on
 }
 
 /* ---------- Step 1: where do you two talk? ---------- */
-function PlatformPicker({ value, onChange, theme, onTheme, footer }) {
+function PlatformPicker({ value, onChange, theme, onTheme, footer, consent }) {
   return (
     <section className="panel">
       <div className="pick-head">
@@ -175,6 +177,16 @@ function PlatformPicker({ value, onChange, theme, onTheme, footer }) {
           </button>
         ))}
       </div>
+      {consent && (
+        <label className="check consent">
+          <input type="checkbox" checked={consent.value} onChange={(e) => consent.onChange(e.target.checked)} />
+          <span>
+            These are conversations I was part of. I'll use imy only for myself, and never to pretend to be
+            this person to anyone else.{" "}
+            <a href="/terms.html" target="_blank" rel="noreferrer">Terms</a>
+          </span>
+        </label>
+      )}
       <div className="actions">{footer}</div>
     </section>
   );

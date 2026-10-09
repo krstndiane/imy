@@ -38,6 +38,9 @@ CURRENT: ContextVar[dict | None] = ContextVar("imy_current_user", default=None)
 SESSION_COOKIE = "imy_session"
 SESSION_DAYS = 30
 MIN_PASSWORD = 8
+# Change this whenever terms.html changes. Each account keeps the version it agreed to at sign-up,
+# so you can always tell who agreed to what.
+TERMS_VERSION = "2026-10-10"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]{2,}$")
 
 # scrypt settings. Higher n = slower to guess, but also slower to sign in; 2**14 takes a few
@@ -94,9 +97,12 @@ def check_new_password(password: str) -> str:
     return password
 
 
-def create_user(email: str, password: str, is_adult: bool) -> dict:
+def create_user(email: str, password: str, is_adult: bool, terms: bool = False) -> dict:
     """Make an account. The first one ever created also adopts anyone already in the database,
-    so upgrading an older copy of imy doesn't lose the people you already set up."""
+    so upgrading an older copy of imy doesn't lose the people you already set up.
+
+    `terms`: they agreed to the Terms. The sign-up page requires it (see main.sign_up); it's
+    recorded with the version and time so it can be shown later."""
     email = clean_email(email)
     check_new_password(password)
     if not is_adult:
@@ -106,8 +112,9 @@ def create_user(email: str, password: str, is_adult: bool) -> dict:
             raise AuthError("There's already an account with that email. Sign in instead.")
         first = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
         cur = conn.execute(
-            "INSERT INTO users (email, password_hash, is_adult, created_at, last_seen) VALUES (?,?,1,?,?)",
-            (email, hash_password(password), now(), now()))
+            "INSERT INTO users (email, password_hash, is_adult, terms_version, terms_at, created_at, last_seen) "
+            "VALUES (?,?,1,?,?,?,?)",
+            (email, hash_password(password), TERMS_VERSION if terms else "", now() if terms else None, now(), now()))
         uid = cur.lastrowid
         if first:
             conn.execute("UPDATE persons SET user_id = ? WHERE user_id IS NULL", (uid,))
@@ -218,11 +225,23 @@ def current_id() -> int | None:
     return me["id"] if me else None
 
 
-def secure_cookies() -> bool:
-    """Send the cookie only over HTTPS. On by default unless imy is running on a plain
-    http:// address, which is how you run it on your own computer."""
+def secure_cookies(request=None) -> bool:
+    """Send the cookie only over HTTPS.
+
+    IMY_SECURE_COOKIES=1 / 0 decides it outright. Otherwise imy looks at how this visitor actually
+    reached it: over HTTPS (directly, or through the host's proxy, which says so in
+    X-Forwarded-Proto) means Secure. That matters because on most hosts the website and the API
+    share one address, so IMY_ORIGINS is never set - and the cookie used to go out without Secure
+    on a live https:// site. Plain http:// (your own computer) still works without it."""
     flag = os.environ.get("IMY_SECURE_COOKIES")
     if flag is not None:
         return flag == "1"
+    if request is not None:
+        proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if proto == "https" or request.url.scheme == "https":
+            return True
+        if proto == "http" or request.url.scheme == "http":
+            return any(h.strip().startswith("https://") for h in os.environ.get("IMY_ORIGINS", "").split(",")
+                       if h.strip())
     return not any(h.startswith("http://") for h in
                    os.environ.get("IMY_ORIGINS", "http://localhost").split(","))

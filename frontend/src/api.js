@@ -64,7 +64,8 @@ export const api = {
 
   // Accounts. The server replies with a cookie; the browser sends it back by itself after that.
   me: () => send("GET", "/api/auth/me"),
-  signUp: (email, password, is_adult) => send("POST", "/api/auth/signup", { email, password, is_adult }),
+  // One tick box on the sign-up form covers both: 18 or over, and agreeing to the Terms.
+  signUp: (email, password, agreed) => send("POST", "/api/auth/signup", { email, password, is_adult: agreed, agrees: agreed }),
   signIn: (email, password) => send("POST", "/api/auth/signin", { email, password }),
   signOut: () => send("POST", "/api/auth/signout"),
   changePassword: (old_password, new_password) => send("PUT", "/api/auth/password", { old_password, new_password }),
@@ -73,7 +74,7 @@ export const api = {
   questions: () => send("GET", "/api/questions"),
   persons: () => send("GET", "/api/persons"),
   person: (id) => send("GET", `/api/persons/${id}`),
-  createPerson: (answers, platform) => send("POST", "/api/persons", { answers, platform }),
+  createPerson: (answers, platform, consent) => send("POST", "/api/persons", { answers, platform, consent: !!consent }),
   updatePerson: (id, answers, platform) => send("PUT", `/api/persons/${id}`, { answers, platform }),
   deletePerson: (id) => send("DELETE", `/api/persons/${id}`),
   setLlm: (id, use_llm) => send("PUT", `/api/persons/${id}/settings`, { use_llm }),

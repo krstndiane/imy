@@ -9,6 +9,7 @@ fails a whole upload, a failing reply falls back to a simpler one, and unexpecte
 as a friendly message instead of taking the page down.
 """
 import hashlib
+import html
 import json
 import os
 import random
@@ -24,13 +25,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from . import auth, backup, claude, engine, importers, llm, looks, media as media_mod, notes, ocr, parser, style as style_mod
+from . import auth, backup, claude, engine, importers, llm, looks, media as media_mod, notes, ocr, parser, style as style_mod, usage
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +48,7 @@ async def lifespan(_app):
     auth.sweep_sessions()                    # drop sign-ins that ran out while imy was off
     auth.start_sweeper()                     # and keep doing it while it runs
     backup.start_daily()                     # only does anything with IMY_BACKUP_DAILY=1
+    usage.prune()                            # daily AI counts older than ~a month aren't needed
     engine.VectorSpace.warm_up()             # load the matcher in the background: the first reply isn't slow
     if llm.enabled():
         print(f"[imy] AI brain on: {', '.join(llm.providers())} (mode: {llm.mode()})")
@@ -127,10 +129,31 @@ def _forget_quiet_visitors(t: float) -> None:
             del _hits[key]
 
 
+def visitor(request: Request) -> str:
+    """The visitor's address, in a way they can't fake.
+
+    Behind a host's proxy (Render, Railway, Fly...), the real address is in X-Forwarded-For. But
+    anyone can send that header with whatever they like in it, and the proxy only ADDS the address
+    it saw to the end. So the first entry is whatever the visitor typed, and the last one is the
+    one the proxy vouches for. imy used to take the first, which let a script dodge the sign-in
+    limit just by sending a different made-up address each time.
+
+    IMY_PROXY_HOPS is how many proxies sit in front of imy (1 for most hosts; 2 if you add
+    Cloudflare in front of one; 0 if nothing does, and then the header is ignored)."""
+    try:
+        hops = max(0, int(os.environ.get("IMY_PROXY_HOPS", "1")))
+    except ValueError:
+        hops = 1
+    chain = [h.strip() for h in (request.headers.get("x-forwarded-for") or "").split(",") if h.strip()]
+    if hops and chain:
+        return chain[-min(hops, len(chain))]
+    return request.client.host if request.client else "?"
+
+
 def rate_limit(request: Request | None, kind: str) -> None:
     if request is None or os.environ.get("IMY_RATE_LIMIT", "1") == "0":
         return
-    who = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "?")).split(",")[0].strip()
+    who = visitor(request)
     n, per = LIMITS[kind]
     t = time.time()
     with _hits_lock:
@@ -161,7 +184,8 @@ def status():
 class SignUpIn(BaseModel):
     email: str = ""
     password: str = ""
-    is_adult: bool = False      # ticked the "I'm 18 or over and I agree to the rules" box
+    is_adult: bool = False      # confirmed they're 18 or over
+    agrees: bool = False        # agreed to the Terms and read the privacy page (same tick box on the site)
 
 
 class SignInIn(BaseModel):
@@ -174,13 +198,13 @@ class PasswordIn(BaseModel):
     new_password: str = ""
 
 
-def _signed_in(user: dict, token: str) -> JSONResponse:
+def _signed_in(user: dict, token: str, request: Request | None = None) -> JSONResponse:
     """Answer with the account, and put the session in a cookie the browser sends back every time.
     httponly keeps JavaScript (and anything injected into the page) from reading it; samesite=lax
     stops another website from using it behind your back."""
     resp = JSONResponse({"user": {"id": user["id"], "email": user["email"]}})
     resp.set_cookie(auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400,
-                    httponly=True, samesite="lax", secure=auth.secure_cookies(), path="/")
+                    httponly=True, samesite="lax", secure=auth.secure_cookies(request), path="/")
     return resp
 
 
@@ -188,11 +212,13 @@ def _signed_in(user: dict, token: str) -> JSONResponse:
 def sign_up(body: SignUpIn, request: Request = None):
     rate_limit(request, "auth")
     try:
-        user = auth.create_user(body.email, body.password, body.is_adult)
+        if not body.agrees:
+            raise auth.AuthError("Please agree to the Terms to make an account.")
+        user = auth.create_user(body.email, body.password, body.is_adult, terms=True)
     except auth.AuthError as exc:
         raise HTTPException(400, str(exc))
     token = auth.start_session(user["id"], request.headers.get("user-agent", "") if request else "")
-    return _signed_in(user, token)
+    return _signed_in(user, token, request)
 
 
 @app.post("/api/auth/signin")
@@ -203,7 +229,7 @@ def sign_in(body: SignInIn, request: Request = None):
     except auth.AuthError as exc:
         raise HTTPException(401, str(exc))
     token = auth.start_session(user["id"], request.headers.get("user-agent", "") if request else "")
-    return _signed_in(user, token)
+    return _signed_in(user, token, request)
 
 
 @app.post("/api/auth/signout")
@@ -224,7 +250,36 @@ def who_am_i():
         return {"user": None}
     with db() as conn:
         people = conn.execute("SELECT COUNT(*) FROM persons WHERE user_id = ?", (me["id"],)).fetchone()[0]
-    return {"user": {"id": me["id"], "email": me["email"], "created_at": me["created_at"], "people": people}}
+    return {"user": {"id": me["id"], "email": me["email"], "created_at": me["created_at"], "people": people,
+                     "ai_today": usage.summary(me["id"])}}
+
+
+def wipe_account(user_id: int) -> list[int]:
+    """Remove an account and everything under it: people, messages, chats, photos, screenshots,
+    sign-ins, usage counts, and every uploaded file. Used by "Delete everything" and by
+    `python -m backend.admin remove`. Returns the ids of the people removed."""
+    with db() as conn:
+        pids = [r["id"] for r in conn.execute("SELECT id FROM persons WHERE user_id = ?", (user_id,))]
+        paths = [r["stored_path"] for r in conn.execute(
+            "SELECT s.stored_path FROM screenshots s JOIN persons p ON p.id = s.person_id "
+            "WHERE p.user_id = ? AND s.stored_path IS NOT NULL", (user_id,))]
+        # Deleted by hand rather than left to the database's cascade: "delete everything" has to
+        # mean everything, so nothing depends on a foreign key behaving as expected.
+        for pid in pids:
+            conn.execute("DELETE FROM messages WHERE person_id = ?", (pid,))
+            conn.execute("DELETE FROM chat_messages WHERE person_id = ?", (pid,))
+            conn.execute("DELETE FROM media WHERE person_id = ?", (pid,))
+            conn.execute("DELETE FROM screenshots WHERE person_id = ?", (pid,))
+        conn.execute("DELETE FROM persons WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM ai_usage WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    for p in paths:
+        (UPLOAD_DIR / p).unlink(missing_ok=True)
+    for pid in pids:
+        shutil.rmtree(UPLOAD_DIR / str(pid), ignore_errors=True)
+        engine.forget(pid)
+    return pids
 
 
 class DeleteAccountIn(BaseModel):
@@ -244,26 +299,7 @@ def delete_account(body: DeleteAccountIn, request: Request = None):
         auth.verify_user(me["email"], body.password)
     except auth.AuthError:
         raise HTTPException(401, "That isn't your password.")
-    with db() as conn:
-        pids = [r["id"] for r in conn.execute("SELECT id FROM persons WHERE user_id = ?", (me["id"],))]
-        paths = [r["stored_path"] for r in conn.execute(
-            "SELECT s.stored_path FROM screenshots s JOIN persons p ON p.id = s.person_id "
-            "WHERE p.user_id = ? AND s.stored_path IS NOT NULL", (me["id"],))]
-        # Deleted by hand rather than left to the database's cascade: "delete everything" has to
-        # mean everything, so nothing depends on a foreign key behaving as expected.
-        for pid in pids:
-            conn.execute("DELETE FROM messages WHERE person_id = ?", (pid,))
-            conn.execute("DELETE FROM chat_messages WHERE person_id = ?", (pid,))
-            conn.execute("DELETE FROM media WHERE person_id = ?", (pid,))
-            conn.execute("DELETE FROM screenshots WHERE person_id = ?", (pid,))
-        conn.execute("DELETE FROM persons WHERE user_id = ?", (me["id"],))
-        conn.execute("DELETE FROM sessions WHERE user_id = ?", (me["id"],))
-        conn.execute("DELETE FROM users WHERE id = ?", (me["id"],))
-    for p in paths:
-        (UPLOAD_DIR / p).unlink(missing_ok=True)
-    for pid in pids:
-        shutil.rmtree(UPLOAD_DIR / str(pid), ignore_errors=True)
-        engine.forget(pid)
+    pids = wipe_account(me["id"])
     resp = JSONResponse({"ok": True, "deleted_people": len(pids)})
     resp.delete_cookie(auth.SESSION_COOKIE, path="/")
     return resp
@@ -278,7 +314,7 @@ def set_password(body: PasswordIn, request: Request = None):
     except auth.AuthError as exc:
         raise HTTPException(400, str(exc))
     token = auth.start_session(me["id"], request.headers.get("user-agent", "") if request else "")
-    return _signed_in(me, token)      # changing it signs out every other browser; keep this one
+    return _signed_in(me, token, request)      # changing it signs out every other browser; keep this one
 
 
 # ---------------------------------------------------------------- who owns what
@@ -468,14 +504,22 @@ def list_persons():
         return [_person_summary(conn, r) for r in rows]
 
 
+class NewPersonIn(AnswersIn):
+    # Ticked "these are conversations I was part of, and I won't use imy to pretend to be this person
+    # to anyone else". Asked once, when the person is added, and the time is kept with them.
+    consent: bool = False
+
+
 @app.post("/api/persons")
-def create_person(body: AnswersIn):
+def create_person(body: NewPersonIn):
     _check_platform(body.platform)
+    if not body.consent:
+        raise HTTPException(400, "Please confirm these are your own conversations before adding someone.")
     with db() as conn:
         ts = now()
         cur = conn.execute(
-            "INSERT INTO persons (name, answers, platform, user_id, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-            (_name_from_answers(body.answers), json.dumps(body.answers), body.platform or "", _uid(), ts, ts))
+            "INSERT INTO persons (name, answers, platform, user_id, consent_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (_name_from_answers(body.answers), json.dumps(body.answers), body.platform or "", _uid(), ts, ts, ts))
         _sync_practice(conn, cur.lastrowid, body.answers)
         return _person_summary(conn, _person_row(conn, cur.lastrowid))
 
@@ -1384,6 +1428,38 @@ def get_style(pid: int):
     return {"lines": style_mod.describe_style(index.style), "embedder": index.space.kind,
             "exchanges": len(index.prompts), "messages": index.style["n_messages"],
             "ai": llm.status()}
+
+
+# ---------------------------------------------------------------- privacy + terms pages
+# Both are plain HTML files in frontend/public (copied to dist when the site is built). They say
+# {{CONTACT_EMAIL}} wherever your contact address goes, and it's filled in here from IMY_CONTACT_EMAIL,
+# so the address lives in your settings instead of being typed into the pages and rebuilt.
+LEGAL_PAGES = {"privacy.html", "terms.html"}
+
+
+def contact_email() -> str:
+    return os.environ.get("IMY_CONTACT_EMAIL", "").strip()
+
+
+def _legal_page(name: str):
+    for folder in (FRONTEND_DIST, ROOT / "frontend" / "public"):
+        f = folder / name
+        if f.is_file():
+            email = contact_email()
+            link = (f'<a href="mailto:{html.escape(email)}">{html.escape(email)}</a>' if email
+                    else "<em>(the person running this site hasn't added a contact address yet)</em>")
+            return HTMLResponse(f.read_text(encoding="utf-8").replace("{{CONTACT_EMAIL}}", link))
+    raise HTTPException(404, "Not found")
+
+
+@app.get("/privacy.html")
+def privacy_page():
+    return _legal_page("privacy.html")
+
+
+@app.get("/terms.html")
+def terms_page():
+    return _legal_page("terms.html")
 
 
 # ---------------------------------------------------------------- serve the built frontend (optional)

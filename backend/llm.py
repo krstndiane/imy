@@ -24,6 +24,7 @@ Settings (optional, in .env):
                            always: AI for everything except what you taught it;  off: never
     IMY_AI_ORDER=groq,gemini
     IMY_LLM_MODEL=...      force one model id
+    IMY_AI_DAILY_PER_ACCOUNT=50 / IMY_AI_DAILY_SITE=0   daily limits (see usage.py)
 """
 import json
 import os
@@ -34,6 +35,7 @@ import urllib.error
 import urllib.request
 
 from . import claude  # noqa: F401  (importing it loads the .env file)
+from . import usage
 
 TIMEOUT = float(os.environ.get("IMY_AI_TIMEOUT", "15"))   # seconds per request: a stuck call never freezes a chat
 MAX_ATTEMPTS = 4                                         # different models tried before giving up on one reply
@@ -51,6 +53,11 @@ class LLMError(RuntimeError):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
+
+
+class OverLimit(LLMError):
+    """This account (or the whole site) has used today's AI allowance - see usage.py.
+    The message is written for the person reading it."""
 
 
 # ------------------------------------------------------------------ which providers are on
@@ -102,6 +109,8 @@ def status() -> dict:
 
 def explain(exc: Exception) -> str:
     """One short, user-facing reason a call failed."""
+    if isinstance(exc, OverLimit):
+        return str(exc)
     st = getattr(exc, "status", None)
     if st in (401, 403) or (st == 400 and "api key" in str(exc).lower()):
         return "the API key was rejected"
@@ -272,7 +281,10 @@ def _cool(p: str, model: str, exc: LLMError) -> None:
 def chat(system: str, history: list[dict], user_text: str, max_bubbles: int, name: str = "") -> list[str]:
     """history: [{"role": "user"|"person", "text": ...}] oldest first. Returns the reply bubbles.
     Tries the best available free model; on a limit or error moves to the next one (and to Gemini
-    when Groq is used up). Raises LLMError if none answered."""
+    when Groq is used up). Raises LLMError if none answered, OverLimit if today's allowance is used."""
+    reason = usage.blocked("reply")
+    if reason:
+        raise OverLimit(reason)
     turns = claude.build_turns(history[-14:], user_text)
     last: Exception = LLMError("no AI model is available right now")
     started = time.time()
@@ -298,6 +310,7 @@ def chat(system: str, history: list[dict], user_text: str, max_bubbles: int, nam
         if bubbles:
             _working[p] = model
             _last.update(provider=p, model=model, at=time.strftime("%H:%M:%S"))
+            usage.spend("reply")
             return bubbles
         last = LLMError("empty response")
     raise last
@@ -305,12 +318,17 @@ def chat(system: str, history: list[dict], user_text: str, max_bubbles: int, nam
 
 def ask(system: str, user_text: str) -> str:
     """One plain question to the AI, answered as raw text (used for imy's own background jobs,
-    like keeping notes of what you told them). Returns "" if no model answered."""
+    like keeping notes of what you told them). Returns "" if no model answered, or if this account
+    has used today's AI allowance (background work waits until tomorrow)."""
+    if usage.blocked("other"):
+        return ""
     for attempt, (p, model) in enumerate(_candidates()):
         if attempt >= 2:
             break
         try:
-            return CALLS[p][1](model, system, [{"role": "user", "content": user_text}]).strip()
+            text = CALLS[p][1](model, system, [{"role": "user", "content": user_text}]).strip()
+            usage.spend("other")
+            return text
         except (LLMError, KeyError, IndexError, TypeError) as exc:
             print(f"[imy] {p}/{model}: {explain(exc) if isinstance(exc, LLMError) else exc}")
             if isinstance(exc, LLMError):
@@ -385,7 +403,10 @@ def can_see() -> bool:
 
 
 def see(data_url: str, prompt: str = SEE_PROMPT) -> str:
-    """One short description of an image. Returns "" if no free model could look at it."""
+    """One short description of an image. Returns "" if no free model could look at it, or if this
+    account has used today's AI allowance (the photo still sends; media.py describes it less)."""
+    if usage.blocked("photo"):
+        return ""
     seers = {"groq": _groq_see, "gemini": _gemini_see}
     for p, model in _vision_candidates()[:3]:
         try:
@@ -398,6 +419,7 @@ def see(data_url: str, prompt: str = SEE_PROMPT) -> str:
             continue
         text = " ".join(text.split())
         if text:
+            usage.spend("photo")
             return text[:600]
     return ""
 

@@ -88,9 +88,16 @@ them rather than to anyone who knows the address.
   (and take the same time), so nobody can use the form to find out which emails have accounts.
 - **"Delete everything"** (account menu) removes the account, every person, every message and every
   uploaded file. It asks for the password and the typed word DELETE, and there's no undo.
-- **The privacy page** is `frontend/public/privacy.html`, served at `/privacy.html` and linked from
-  the sign-in screen, the account menu and the landing page. **Put your contact email in it before
-  you publish** — it ships with a placeholder.
+- **Terms and consent.** Making an account means ticking "I'm 18 or over and agree to the Terms";
+  the version and time are kept with the account (`TERMS_VERSION` in `auth.py`). Adding a person
+  asks "these are conversations I was part of, and I won't use imy to pretend to be them" once, and
+  keeps that time too. imy can't check that the person being copied agreed — the Terms put that on
+  the account, and anyone who's been copied can ask for removal.
+- **Every chat says what it is.** The top of each conversation reads "Replies are written by AI from
+  their old messages. It isn't really them."
+- **The privacy and terms pages** are `frontend/public/privacy.html` and `terms.html`, served at
+  `/privacy.html` and `/terms.html` and linked from sign-up, the account menu and the landing page.
+  Your contact address is filled in from **`IMY_CONTACT_EMAIL`** — set it before you go live.
 
 ## How many people can it handle?
 
@@ -115,8 +122,10 @@ chatting at the same moment.
 all use an index. In order, the real limits are:
 
 1. **The AI quota.** The free Groq tier is a few hundred replies a day *shared across your whole
-   site*. At a thousand users that's gone in minutes. Per-account limits and a paid tier are the
-   work to do before charging anyone.
+   site*. Each account now gets a daily share (`IMY_AI_DAILY_PER_ACCOUNT`, default 50, shown in the
+   account menu), so one busy person can't use it up for everyone; past it, replies come from imy
+   itself. That makes it fair, not bigger — for real numbers of people you need Groq's paid plan,
+   and `IMY_AI_DAILY_SITE` caps the bill. `python -m backend.admin usage` shows today's use.
 2. **Reading screenshots.** OCR costs about **6 seconds of CPU per screenshot** — by far the
    heaviest thing imy does. A thousand new people uploading 20 screenshots each is roughly 33 hours
    of CPU. Spread over a day on a few cores that's survivable; arriving in one hour it is not.
@@ -158,6 +167,8 @@ SQLite puts writes back to fighting each other and duplicates the memory.
 python -m backend.backup                 # one backup now, into data/backups/
 python -m backend.backup --db-only       # skip the photos (much smaller)
 python -m backend.backup --list          # what you have
+python -m backend.backup --check FILE    # prove one: checksums, database check, what's inside
+python -m backend.backup --restore FILE  # unpack into a NEW folder and check it (never touches live data)
 ```
 
 Each backup is a single zip: the database plus every uploaded file. The database is copied with
@@ -165,8 +176,9 @@ SQLite's own online backup, so it's safe to run while imy is serving people. The
 (`--keep N`, or `IMY_BACKUP_KEEP`). Set `IMY_BACKUP_DAILY=1` and imy makes one every 24 hours by
 itself.
 
-**To restore:** stop imy, unzip the backup over your `data/` folder so `imy.db` and `uploads/` land
-back where they were, start imy. Try this once before you need it.
+**To restore:** run `--restore` on the backup (it unpacks into `data/restored-<time>/` and checks
+it), then stop imy, move the current `data/imy.db` (with its `-wal`/`-shm` files) and `data/uploads/`
+aside, move the restored ones into `data/`, and start imy. Try it once before you need it.
 
 A backup on the same disk saves you from a bad deploy or a mistaken delete, not from losing the
 disk. Also turn on your host's snapshots, and download a zip now and then.
@@ -211,7 +223,11 @@ users in Europe or the UK. imy sends chat messages, so only use Gemini with bill
 and `IMY_GEMINI_PAID=1`). With both keys, Groq is used first and Gemini takes over when Groq's free limit is hit.
 
 Free limits are shared by everyone using your copy of imy (a few hundred AI replies a day on Groq's free plan). imy only uses
-the AI when its own data isn't enough, rests a model for a minute when its limit is hit, and falls back to its own replies.
+the AI when its own data isn't enough, gives each account a daily share (`IMY_AI_DAILY_PER_ACCOUNT`, see `usage.py`), rests a
+model for a minute when its limit is hit, and falls back to its own replies.
+
+**Turn on Zero Data Retention at Groq** (console → Settings → Data Controls). By default Groq doesn't keep what's sent, but it
+may keep it up to 30 days to investigate errors or abuse; ZDR switches that off too.
 For a big public launch you'll want a paid plan (Groq's is inexpensive). `IMY_AI_MODE=always` uses the AI for every reply.
 
 Optional, still supported: a local model with Ollama (*How they write* > "Use a local model"), and Claude (`ANTHROPIC_API_KEY`,
@@ -236,11 +252,12 @@ paid; it also reads screenshots).
 
 ## Project layout
 ```
-backend/   main.py (API)  db.py (SQLite)  auth.py (accounts + sign-in)  backup.py
+backend/   main.py (API)  db.py (SQLite)  auth.py (accounts + sign-in)  backup.py  usage.py (daily AI limits)
+           preflight.py (launch checks)  admin.py (accounts from the command line)
            ocr.py + parser.py + looks.py (screenshots)  importers.py (chat files)
            engine.py + smalltalk.py + personality.py + style.py (replies)  llm.py (free AI)
            media.py (photos shared in a chat + describing them)  notes.py (what they remember)  questions.json  tests/
-frontend/  src/App.jsx  src/platforms.js  src/styles.css  dist/ (built)  public/privacy.html
+frontend/  src/App.jsx  src/platforms.js  src/styles.css  dist/ (built)  public/{privacy,terms,landing}.html
            src/components/{Auth,Account,Sidebar,Trainer,TrainPanel,Chat,ChatPanels,Avatar,Icon,ErrorBoundary}.jsx
 data/      created on first run: imy.db + uploads/ (screenshots, profile pictures, shared photos) + backups/
 ```
@@ -256,23 +273,54 @@ docker run -p 8000:8000 -v imy-data:/data --env-file .env imy
 
 Any host that runs Docker works (Render, Railway, Fly.io, a small VPS). Give it a **persistent disk mounted at `/data`**
 (database + screenshots), set the variables from `.env.example` in the host's settings (never upload `.env` itself), and
-point its health check at `/api/health`. The container uses the lighter TF-IDF matcher, so ~512 MB of memory is enough.
+point its health check at `/api/health`. Give it **1 GB of memory** (the cache of how people write is ~75 MB, and reading
+screenshots needs room).
 
 Built to stay up: short database locks (uploads and chats never block each other), one bad screenshot doesn't fail a batch,
 a failed reply falls back to a simpler one, every error comes back as a friendly message, a broken screen shows "Try again"
 instead of a blank page, and the website reconnects by itself if the server restarts. There's a per-visitor speed limit too.
 
-### Before you open it to the public
-- **Your contact email** in `frontend/public/privacy.html` (it ships with a placeholder), then rebuild the frontend.
-- **HTTPS** — most hosts give you this. Set `IMY_ORIGINS` to your `https://` address so the sign-in cookie
-  is marked `Secure`; `IMY_SECURE_COOKIES=1` forces it either way.
-- **Backups**: set `IMY_BACKUP_DAILY=1`, and turn on your host's own snapshots of the `/data` disk.
-- **Paying for the AI.** The free Groq limits are shared by *everyone* using your site, not per person — a
-  few hundred replies a day in total. Count usage per account before you charge anyone.
-- **A privacy page**: what's stored (messages, profile pictures and every photo shared in a chat), that replies may be
-  written by Groq (or Gemini), that a shared photo is sent to them to be described, and how to delete everything
-  (Delete in the chat menu).
-- **Ages:** the AI providers' terms are for adults; make imy 18+.
+### Going live
+
+**1. Settings on the host** (from `.env.example`; never upload `.env` itself):
+`GROQ_API_KEY`, `IMY_CONTACT_EMAIL`, `IMY_BACKUP_DAILY=1`, `TZ=Asia/Manila`, and leave `IMY_SECURE_COOKIES` unset.
+Use a **fresh database** on the server — don't copy your own `data/` folder up, it has your test accounts and chats in it.
+
+**2. Run the checks.** On the server (most hosts have a "shell" or "console" button):
+
+```bash
+python -m backend.preflight                                # settings, database, backups, disk, build
+python -m backend.preflight --url https://your.address     # and the live site, from outside
+```
+
+It checks everything a computer can: the contact address on both pages, HTTPS and the http→https redirect,
+that signed-out requests for people and files are refused, the secure cookie setting, daily backups and that
+the newest one opens, free disk, test-looking accounts, the daily AI limit, Gemini's free tier, and that
+`.env` was never committed. It changes nothing, and exits with an error if anything must be fixed.
+
+**3. What only you can do:**
+- **Rotate any API key** that has ever been pasted into a chat, a screenshot or a shared file: make a new one at
+  console.groq.com/keys, put it in the host's settings, delete the old one.
+- **Turn on Zero Data Retention** at Groq (Settings → Data Controls).
+- **Turn on your host's disk snapshots**, and download a backup somewhere else once a week.
+- **Uptime monitoring:** point a free monitor (UptimeRobot, Better Stack…) at `https://your.address/api/health`
+  with an email alert.
+- **Groq's limits and billing:** check your plan's daily limits before launch day; switch to the paid plan before
+  you market to a crowd.
+- **The law:** imy stores personal chats. In the Philippines that's the Data Privacy Act of 2012; the National
+  Privacy Commission requires registration once you process sensitive personal information of 1,000 or more
+  people. Chats can contain exactly that, so check with the NPC or a lawyer before you charge money or pass a
+  thousand users. The Terms in `terms.html` are a plain-language starting point, not legal advice.
+
+### Running it
+
+- **Who can reach people's data:** whoever can open the host's dashboard or shell, and whoever has the backups.
+  Keep that to you; use two-factor sign-in on the host, GitHub and Groq.
+- **Deletion requests by email:** `python -m backend.admin remove their@email` shows what would go,
+  add `--yes` to delete it (the same as "Delete everything" in the app). Make a backup first.
+- **Accounts and usage:** `python -m backend.admin accounts`, `python -m backend.admin usage`.
+- **A key leaked:** make a new key, set it on the host, restart imy, delete the old key. Nothing else needs to change.
+- **After changing the Terms:** bump `TERMS_VERSION` in `backend/auth.py` so new sign-ups record the new version.
 
 ## Known limits
 - **Without a key, replies are pattern-based**: they sound like the person but can be generic when nothing fits. With a key they understand context.
