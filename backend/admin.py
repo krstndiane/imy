@@ -85,7 +85,7 @@ def admin_link(email: str | None, site: str | None) -> int:
         return 1
     email = (email or admins[0]).strip().lower()
     if not insights.is_admin_email(email):
-        print(f"{email} isn't an admin. Admin addresses (IMY_ADMIN_EMAILS): {', '.join(admins)}")
+        print(f"{email} isn't an admin. The admin addresses are in IMY_ADMIN_EMAILS in the .env file.")
         return 1
     token = insights.start_admin_link(email)
     if not token:

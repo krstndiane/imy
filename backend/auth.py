@@ -207,7 +207,8 @@ def finish_reset(token: str, new_password: str) -> dict:
         if claimed.rowcount != 1:
             raise AuthError(RESET_EXPIRED)
         uid = conn.execute("SELECT user_id FROM password_resets WHERE token_hash = ?", (th,)).fetchone()[0]
-        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, uid))
+        conn.execute("UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?",
+                     (new_hash, now(), uid))
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
         conn.execute("DELETE FROM password_resets WHERE user_id = ? AND token_hash != ?", (uid, th))
         return dict(conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone())

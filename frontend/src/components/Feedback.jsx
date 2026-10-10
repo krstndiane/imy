@@ -23,6 +23,7 @@ export default function Feedback({ user, page = "app" }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
+  const [contact, setContact] = useState("");   // the site's inbox (IMY_CONTACT_EMAIL), for "prefer email?"
   const box = useRef(null);
   const opener = useRef(null);
 
@@ -32,6 +33,13 @@ export default function Feedback({ user, page = "app" }) {
     if (sent) { setSent(false); setMessage(""); setRating(null); setKind("idea"); }
     opener.current?.focus();
   };
+
+  useEffect(() => {
+    if (!open || contact) return;
+    let live = true;
+    api.status().then((s) => live && setContact(s.contact || "")).catch(() => {});
+    return () => { live = false; };
+  }, [open]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return;
@@ -68,6 +76,7 @@ export default function Feedback({ user, page = "app" }) {
                 <p className="fb-big" aria-hidden="true">💙</p>
                 <h2 id="fb-title">Thank you</h2>
                 <p className="muted">The people running imy read every note.{canReply ? " If they have a question, they’ll email you." : ""}</p>
+                {contact && <p className="fine">Anything else? <a href={`mailto:${contact}`}>{contact}</a></p>}
                 <div className="actions"><button type="button" className="btn primary" onClick={close}>Close</button></div>
               </div>
             ) : (
@@ -104,6 +113,9 @@ export default function Feedback({ user, page = "app" }) {
                 </label>
 
                 {error && <p className="banner warn" role="alert">{error}</p>}
+                {contact && (
+                  <p className="fine fb-contact">Prefer email? Write to us at <a href={`mailto:${contact}?subject=${encodeURIComponent("imy feedback")}`}>{contact}</a></p>
+                )}
                 <div className="actions">
                   <button type="button" className="btn" onClick={close}>Cancel</button>
                   <button className="btn primary" disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send"}</button>

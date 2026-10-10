@@ -44,6 +44,9 @@ if [ ! -f .env ]; then
   echo "The Gmail App Password for pdyntechnology@gmail.com (16 letters; typing is hidden):"
   read -rsp "> " smtp_pw; echo
   smtp_pw=${smtp_pw// /}
+  echo "Who can open /admin? Their email addresses, comma-separated (kept only on this server)."
+  read -rp "Admin emails [pdyntechnology@gmail.com]: " admins
+  admins=${admins// /}; admins=${admins:-pdyntechnology@gmail.com}
   echo "Your Groq API key (from console.groq.com/keys; typing is hidden; Enter to skip):"
   read -rsp "> " groq; echo
   umask 077
@@ -52,8 +55,8 @@ if [ ! -f .env ]; then
 IMY_DOMAIN=$domain
 IMY_PUBLIC_URL=https://$domain
 IMY_CONTACT_EMAIL=pdyntechnology@gmail.com
-# Who can open /admin (its sign-in link is emailed to this inbox).
-IMY_ADMIN_EMAILS=pdyntechnology@gmail.com
+# Who can open /admin. Not shown anywhere public. Feedback is emailed to IMY_CONTACT_EMAIL.
+IMY_ADMIN_EMAILS=$admins
 
 IMY_SMTP_HOST=smtp.gmail.com
 IMY_SMTP_PORT=587

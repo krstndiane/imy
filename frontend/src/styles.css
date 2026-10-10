@@ -676,3 +676,5 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 @media (max-width: 760px) { .sidebar .feedback-open { width: auto; flex: none; } }
 @media (prefers-reduced-motion: reduce) { .fb-face { transition: none; } }
 .modal .fb-count { font-size: .75rem; color: var(--muted); }
+.fb-contact { margin: 12px 0 0; color: var(--muted); }
+.fb-contact a, .fb-thanks .fine a { color: var(--accent-hover); }

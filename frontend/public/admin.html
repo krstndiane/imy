@@ -52,6 +52,9 @@
     .gate-card h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.01em; }
     .gate-card p { margin: 0 0 18px; color: var(--ink-2); }
     .gate-card form { display: grid; gap: 10px; }
+    input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--line-2); border-radius: 12px; padding: 11px 14px; outline: none; }
+    input[type=password]:focus { border-color: var(--brand-2); }
+    #gate-account { margin: 0 0 16px; }
     .note { border: 1px solid var(--line-2); background: var(--surface-2); border-radius: 12px; padding: 12px 14px; color: var(--ink-2); }
     .err { color: #ff9b9b; }
 
@@ -142,11 +145,15 @@
     <div class="gate-card">
       <img src="/media/pdyn-logo.png" alt="PDYN Technologies">
       <h1 id="gate-title">imy admin</h1>
-      <p>For the people running imy. We’ll email you a one-time sign-in link, no password needed.</p>
+      <p>For the people running imy. Sign in with your imy account.</p>
+      <p id="gate-account" class="note small hidden" role="status"></p>
       <form id="gate-form" novalidate>
-        <label class="small muted" for="gate-email">Admin email</label>
-        <input id="gate-email" type="email" autocomplete="email" required placeholder="you@example.com">
-        <button class="btn primary" type="submit" id="gate-send" style="justify-content:center;padding:11px 14px">Email me a sign-in link</button>
+        <label class="small muted" for="gate-email">Email</label>
+        <input id="gate-email" type="email" autocomplete="username" required placeholder="you@example.com">
+        <label class="small muted" for="gate-pw">Password</label>
+        <input id="gate-pw" type="password" autocomplete="current-password" placeholder="your imy password">
+        <button class="btn primary" type="submit" id="gate-signin" style="justify-content:center;padding:11px 14px">Sign in</button>
+        <button class="btn ghost" type="button" id="gate-send" style="justify-content:center">No password? Email me a one-time link</button>
         <p id="gate-msg" class="small" role="status" style="margin:4px 0 0"></p>
       </form>
       <p class="small muted" style="margin:18px 0 0">Using imy as a client? <a href="/app">Go to the app</a></p>
@@ -303,11 +310,33 @@
       if (msg) { $('gate-msg').textContent = msg; $('gate-msg').className = 'small err'; }
       stopPolling();
     }
+    // 1. Your imy account: the same email and password as the app.
     $('gate-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const email = $('gate-email').value.trim(), password = $('gate-pw').value;
+      const msg = $('gate-msg');
+      if (!email || !password) { msg.textContent = 'Type your email and password.'; msg.className = 'small err'; return; }
+      $('gate-signin').disabled = true;
+      try {
+        const res = await fetch('/api/auth/signin', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Couldn’t sign in. Try again.');
+        $('gate-pw').value = '';
+        msg.textContent = '';
+        await start();
+      } catch (err) {
+        msg.textContent = err.message; msg.className = 'small err';
+      } finally {
+        $('gate-signin').disabled = false;
+      }
+    });
+
+    // 2. No password: a one-time link emailed to an admin address.
+    $('gate-send').addEventListener('click', async () => {
       const email = $('gate-email').value.trim();
       const msg = $('gate-msg');
-      if (!email) { msg.textContent = 'Type your admin email.'; msg.className = 'small err'; return; }
+      if (!email) { msg.textContent = 'Type your admin email first.'; msg.className = 'small err'; return; }
       $('gate-send').disabled = true;
       try {
         const out = await api('link', { method: 'POST', body: { email }, public: true });
@@ -336,7 +365,20 @@
       }
       let me;
       try { me = await api('me', { public: true }); } catch (err) { showGate(err.message); return; }
-      if (!me.admin) { showGate(); return; }
+      if (!me.admin) {
+        showGate();
+        const note = $('gate-account');
+        const acc = me.account;
+        note.classList.toggle('hidden', !acc);
+        if (acc) {
+          $('gate-email').value = acc.email;
+          note.textContent = acc.admin === 'confirm'
+            ? `You’re signed in as ${acc.email}, an admin. To prove this inbox is yours, use “Email me a one-time link” below once. After that, your account opens this page by itself.`
+            : `You’re signed in to imy as ${acc.email}, which isn’t an admin account. Sign in with an admin account below.`;
+        }
+        return;
+      }
+      signedInVia = me.admin.via;
       $('who').textContent = me.admin.email;
       $('gate').classList.add('hidden');
       $('dash').classList.remove('hidden');
@@ -345,8 +387,13 @@
       startPolling();
     }
 
+    let signedInVia = '';
     $('signout').addEventListener('click', async () => {
       try { await api('logout', { method: 'POST', public: true }); } catch { /* signed out anyway */ }
+      if (signedInVia === 'account') {      // signed in with the imy account: sign out of that too
+        try { await fetch('/api/auth/signout', { method: 'POST', credentials: 'same-origin' }); } catch { /* fine */ }
+      }
+      $('gate-account').classList.add('hidden');
       showGate();
       $('gate-msg').textContent = 'Signed out.'; $('gate-msg').className = 'small muted';
     });

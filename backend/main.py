@@ -98,13 +98,26 @@ async def identify(request: Request, call_next):
         auth.CURRENT.reset(reset)
 
 
+def _local_request(request: Request) -> bool:
+    """This visitor is on the same computer imy runs on (http://localhost, no public address set)."""
+    host = request.client.host if request.client else ""
+    return mailer.is_local(mailer.site_url(request)) and host in ("127.0.0.1", "::1", "localhost")
+
+
 async def _identify_admin(request: Request, call_next, path: str):
-    """Admin requests: the client sign-in cookie means nothing here, only the admin one does."""
+    """Admin requests: either the admin cookie from an emailed link, or a signed-in imy account
+    whose email is an admin's (insights.account_admin says when that counts)."""
     admin = None
     try:
         admin = insights.load_admin(request.cookies.get(insights.ADMIN_COOKIE, ""))
+        if admin:
+            admin = {**admin, "via": "link"}
+        else:
+            user = auth.load_session(request.cookies.get(auth.SESSION_COOKIE, ""))
+            if insights.account_admin(user, _local_request(request)) == "yes":
+                admin = {"email": user["email"], "via": "account"}
     except Exception:
-        print(f"[imy] couldn't read the admin cookie:\n{traceback.format_exc()}")
+        print(f"[imy] couldn't read the admin sign-in:\n{traceback.format_exc()}")
     if not admin and path not in ADMIN_PUBLIC:
         return JSONResponse({"detail": "Admin sign-in needed."}, status_code=401)
     reset = insights.ADMIN.set(admin)
@@ -208,7 +221,8 @@ def health():
 @app.get("/api/status")
 def status():
     """Which brain is on (no keys are ever shown)."""
-    return {"ai": llm.status(), "claude": claude.enabled(), "matcher": engine.VectorSpace.kind_now()}
+    return {"ai": llm.status(), "claude": claude.enabled(), "matcher": engine.VectorSpace.kind_now(),
+            "contact": contact_email()}      # the site's public contact address (IMY_CONTACT_EMAIL), shown in the app
 
 
 # ---------------------------------------------------------------- accounts
@@ -273,7 +287,7 @@ def sign_out(request: Request = None):
 
 
 @app.get("/api/auth/me")
-def who_am_i():
+def who_am_i(request: Request = None):
     """Who's signed in, or nobody. The only protected-looking route that's fine to call signed out,
     because the website asks it first to decide whether to show the sign-in screen."""
     me = auth.current()
@@ -281,8 +295,9 @@ def who_am_i():
         return {"user": None}
     with db() as conn:
         people = conn.execute("SELECT COUNT(*) FROM persons WHERE user_id = ?", (me["id"],)).fetchone()[0]
+    admin = insights.account_admin(me, request is not None and _local_request(request))
     return {"user": {"id": me["id"], "email": me["email"], "created_at": me["created_at"], "people": people,
-                     "ai_today": usage.summary(me["id"])}}
+                     "ai_today": usage.summary(me["id"]), "is_admin": admin != "no"}}
 
 
 def wipe_account(user_id: int) -> list[int]:
@@ -1555,15 +1570,21 @@ def send_feedback(body: FeedbackIn, request: Request = None):
         out = feedback_mod.add(me["id"], body.kind, body.message, body.rating, body.can_reply, body.page)
     except feedback_mod.FeedbackError as exc:
         raise HTTPException(400, str(exc))
-    # Let the admins know (IMY_FEEDBACK_EMAILS=0 turns this off). Only when email really works:
-    # a notice that can't be sent shouldn't fill the server log.
+    # Email it to the site's inbox (IMY_FEEDBACK_TO, else the contact address; IMY_FEEDBACK_EMAILS=0
+    # turns this off). Never to every admin: an admin's own address may be personal. Only when email
+    # really works - a notice that can't be sent shouldn't fill the server log.
     if mailer.configured() and os.environ.get("IMY_FEEDBACK_EMAILS", "1") != "0":
         site = mailer.site_url(request)
         mail = mailer.feedback_email(feedback_mod.KINDS[out["kind"]], body.message.strip(), body.rating,
                                      me["email"] if body.can_reply else None, site)
-        for admin in insights.admin_emails():
-            mailer.send_later(admin, *mail)
+        for to in feedback_inbox():
+            mailer.send_later(to, *mail)
     return {"ok": True, **out}
+
+
+def feedback_inbox() -> list[str]:
+    raw = os.environ.get("IMY_FEEDBACK_TO", "").strip() or contact_email() or ",".join(insights.admin_emails()[:1])
+    return [e.strip() for e in raw.split(",") if "@" in e]
 
 
 class VisitIn(BaseModel):
@@ -1596,8 +1617,15 @@ class FeedbackStatusIn(BaseModel):
 
 
 @app.get("/api/admin/me")
-def admin_me():
-    return {"admin": insights.ADMIN.get(), "email_works": mailer.configured()}
+def admin_me(request: Request = None):
+    """Who's signed in to /admin. `account` tells the sign-in screen about the imy account signed in in
+    this browser (if any): whether it's an admin, or an admin that still has to confirm its inbox."""
+    account = None
+    if request is not None and not insights.ADMIN.get():
+        user = auth.load_session(request.cookies.get(auth.SESSION_COOKIE, ""))
+        if user:
+            account = {"email": user["email"], "admin": insights.account_admin(user, _local_request(request))}
+    return {"admin": insights.ADMIN.get(), "account": account, "email_works": mailer.configured()}
 
 
 @app.post("/api/admin/link")
@@ -1614,9 +1642,9 @@ def admin_link(body: AdminLinkIn, request: Request = None):
                                  "IMY_PUBLIC_URL (see backend/mailer.py).")
     token = insights.start_admin_link(email)
     if not token and local:
-        # Your own computer: no need to keep it a secret who the admins are - say why, here and in the Terminal.
+        # Your own computer: say why, here and in the Terminal (without listing the admin addresses).
         admins = insights.admin_emails()
-        why = (f"{email} isn't an admin address on this computer. Admins: {', '.join(admins)}." if admins and email not in admins
+        why = (f"{email} isn't one of the admin addresses (IMY_ADMIN_EMAILS in the .env file)." if admins and email not in admins
                else "That address has asked for too many links this hour. Wait a little, or use the last one." if admins
                else "No admin address is set. Add IMY_ADMIN_EMAILS=you@example.com to the .env file, then restart imy.")
         print(f"[imy] no admin link sent: {why}", flush=True)

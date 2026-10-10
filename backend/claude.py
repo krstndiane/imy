@@ -19,11 +19,32 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-try:  # optional: lets the key live in a .env file instead of the shell
+def _read_env_file(path: Path) -> None:
+    """Settings from .env, for when python-dotenv isn't installed (say, imy was started without the
+    .venv). Plain KEY=value lines; quotes are dropped; anything already set in the shell wins."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip().removeprefix("export ").strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+try:  # lets keys and settings live in a .env file instead of the shell
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 except ImportError:
-    pass
+    _read_env_file(Path(__file__).resolve().parent.parent / ".env")
 
 MODEL = os.environ.get("IMY_CLAUDE_MODEL", "claude-opus-5-5")
 # Refused requests are re-routed to another model server-side instead of failing.

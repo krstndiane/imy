@@ -9,10 +9,15 @@ Two kinds of people use imy, and they never share a door:
 
 Who counts as an admin
     IMY_ADMIN_EMAILS=you@example.com,partner@example.com
-    If that's not set, the contact address (IMY_CONTACT_EMAIL) is the admin. There's no admin
-    password to leak or guess: signing in means opening a link sent to that inbox, so only
-    whoever can read the inbox gets in. Each link works once, for 15 minutes; an admin sign-in
-    lasts 12 hours. On your own computer with email off, the link is printed in the Terminal.
+    If that's not set, the contact address (IMY_CONTACT_EMAIL) is the admin. Two ways in:
+
+    1. Your imy account. Sign in with the email and password of an account whose email is on that
+       list, and /admin opens. Because anyone can make an account with any email address, on a live
+       site this only works once the account has proven it can read that inbox - by using an emailed
+       admin link (or a "forgot password" link) once. On your own computer it works straight away.
+    2. An emailed link. Type an admin email at /admin; a one-time link goes to that inbox (or, on your
+       own computer, is printed in the Terminal; `python -m backend.admin link` prints one too).
+       Each link works once, for 15 minutes; that sign-in lasts 12 hours.
 
 What's counted, and how (the privacy page says the same in plain words)
     Accounts      sign-ups and the last time each account did anything (at most once a minute is
@@ -103,6 +108,8 @@ def use_admin_link(token: str) -> tuple[str, str] | None:
         email = conn.execute("SELECT email FROM admin_links WHERE token_hash = ?", (th,)).fetchone()["email"]
         if not is_admin_email(email):
             return None
+        # Opening the link proves this inbox is theirs, so their imy account can open /admin from now on.
+        conn.execute("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE email = ?", (now(), email))
         session = secrets.token_urlsafe(32)
         conn.execute("INSERT INTO admin_sessions (token_hash, email, created_at, expires_at) VALUES (?,?,?,?)",
                      (_hash(session), email, now(), _utc(timedelta(hours=SESSION_HOURS))))
@@ -119,6 +126,18 @@ def load_admin(token: str) -> dict | None:
     if not row or row["expires_at"] <= now() or not is_admin_email(row["email"]):
         return None
     return {"email": row["email"]}
+
+
+def account_admin(user: dict | None, local: bool) -> str:
+    """Can this signed-in client account open /admin? "yes", "confirm" (its email is an admin's but
+    the account hasn't proven the inbox yet - see the top of this file) or "no"."""
+    if not user or not is_admin_email(user.get("email", "")):
+        return "no"
+    if local:
+        return "yes"
+    with db() as conn:
+        row = conn.execute("SELECT email_verified_at FROM users WHERE id = ?", (user["id"],)).fetchone()
+    return "yes" if row and row["email_verified_at"] else "confirm"
 
 
 def end_admin(token: str) -> None:

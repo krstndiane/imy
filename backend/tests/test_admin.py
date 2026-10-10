@@ -222,7 +222,7 @@ def test_on_your_own_computer_the_page_says_why_no_link_came(monkeypatch):
     _, insights, main, outbox = fresh(monkeypatch)
     monkeypatch.setenv("IMY_PUBLIC_URL", "http://localhost:8000")
     got = main.admin_link(main.AdminLinkIn(email="me@example.com"))
-    assert got["ok"] is False and "isn't an admin" in got["hint"] and "owner@imy.test" in got["hint"]
+    assert got["ok"] is False and "isn't one of the admin addresses" in got["hint"] and "owner@imy.test" not in got["hint"]
     assert not outbox
     monkeypatch.setenv("IMY_ADMIN_EMAILS", "")
     monkeypatch.delenv("IMY_CONTACT_EMAIL", raising=False)
@@ -246,3 +246,71 @@ def test_the_command_line_prints_a_working_link(monkeypatch, capsys=None):
     assert insights.use_admin_link(token)[0] == "owner@imy.test"
     with contextlib.redirect_stdout(io.StringIO()):
         assert admin.admin_link("someone@example.com", None) == 1
+
+
+# ---------------------------------------------------------------- an admin's own imy account
+def test_an_admin_email_account_opens_admin_on_your_own_computer(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch)
+    me = client(auth, "owner@imy.test")
+    other = client(auth, "someone@example.com")
+    assert insights.account_admin(me, local=True) == "yes"
+    assert insights.account_admin(other, local=True) == "no"
+    assert insights.account_admin(None, local=True) == "no"
+
+
+def test_on_a_live_site_the_account_must_prove_its_inbox_first(monkeypatch):
+    auth, insights, main, outbox = fresh(monkeypatch)
+    me = client(auth, "owner@imy.test")          # anyone could have made this account with this email
+    assert insights.account_admin(me, local=False) == "confirm"
+    main.admin_link(main.AdminLinkIn(email="owner@imy.test"))
+    insights.use_admin_link(token_from(outbox[0]))
+    assert insights.account_admin(me, local=False) == "yes"
+
+
+def test_a_password_reset_also_proves_the_inbox(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch)
+    me = client(auth, "owner@imy.test")
+    _, token = auth.start_reset("owner@imy.test")
+    auth.finish_reset(token, "anotherpass1")
+    assert insights.account_admin(me, local=False) == "yes"
+
+
+def test_the_app_tells_an_admin_account_where_admin_is(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch)
+    client(auth, "owner@imy.test")
+    assert main.who_am_i()["user"]["is_admin"] is True
+    client(auth, "someone@example.com")
+    assert main.who_am_i()["user"]["is_admin"] is False
+
+
+def test_env_file_is_read_without_python_dotenv(monkeypatch, tmp_path=None):
+    from backend import claude
+    import pathlib, tempfile
+    folder = pathlib.Path(tempfile.mkdtemp())
+    (folder / ".env").write_text('# comment\nIMY_T_A=one\nIMY_T_B="two words"\nexport IMY_T_C=three # note\nIMY_T_D=\n')
+    for k in ("IMY_T_A", "IMY_T_B", "IMY_T_C", "IMY_T_D"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("IMY_T_A", "from-shell")
+    claude._read_env_file(folder / ".env")
+    assert os.environ["IMY_T_A"] == "from-shell"          # the shell wins
+    assert os.environ["IMY_T_B"] == "two words" and os.environ["IMY_T_C"] == "three" and os.environ["IMY_T_D"] == ""
+
+
+def test_feedback_goes_to_the_contact_inbox_not_to_personal_admin_addresses(monkeypatch):
+    auth, insights, main, outbox = fresh(monkeypatch, admins="owner@imy.test,personal@example.com")
+    monkeypatch.setenv("IMY_CONTACT_EMAIL", "team@imy.test")
+    client(auth)
+    main.send_feedback(main.FeedbackIn(message="hello"))
+    assert [m["to"] for m in outbox] == ["team@imy.test"]
+    monkeypatch.setenv("IMY_FEEDBACK_TO", "inbox@imy.test")
+    main.send_feedback(main.FeedbackIn(message="again"))
+    assert outbox[-1]["to"] == "inbox@imy.test"
+
+
+def test_the_contact_address_is_public_but_admin_addresses_are_not(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch, admins="personal@example.com")
+    monkeypatch.setenv("IMY_CONTACT_EMAIL", "team@imy.test")
+    status = main.status()
+    assert status["contact"] == "team@imy.test" and "personal@example.com" not in str(status)
+    got = main.admin_link(main.AdminLinkIn(email="stranger@example.com"))   # live site: no hint
+    assert "personal@example.com" not in str(got)

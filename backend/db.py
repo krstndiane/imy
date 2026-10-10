@@ -200,6 +200,9 @@ MIGRATIONS = [
     ("persons", "consent_at", "TEXT"),
     # The last time this account did anything (updated at most once a minute; see insights.saw).
     ("users", "last_active", "TEXT"),
+    # Set when the account proves it can read its inbox (used an emailed reset or admin link). An
+    # admin email's account can open /admin with its password only after that (or on your own computer).
+    ("users", "email_verified_at", "TEXT"),
 ]
 
 

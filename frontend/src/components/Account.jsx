@@ -20,11 +20,14 @@ export default function Account({ user, onSignedOut }) {
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
   const [ai, setAi] = useState(null);       // {used, limit} for today, fetched when the menu opens
+  const [isAdmin, setIsAdmin] = useState(false);   // this account's email is one of the site's admins
+  const [contact, setContact] = useState("");      // the site's public inbox (IMY_CONTACT_EMAIL)
 
   useEffect(() => {
     if (open !== "menu") return;
     let live = true;
-    api.me().then((r) => live && setAi(r.user?.ai_today || null)).catch(() => {});
+    api.me().then((r) => { if (live) { setAi(r.user?.ai_today || null); setIsAdmin(!!r.user?.is_admin); } }).catch(() => {});
+    api.status().then((s) => live && setContact(s.contact || "")).catch(() => {});
     return () => { live = false; };
   }, [open]);
 
@@ -111,9 +114,11 @@ export default function Account({ user, onSignedOut }) {
             </div>
           )}
           <div className="actions column">
+            {isAdmin && <a className="btn small primary" href="/admin">Admin page</a>}
             <button className="btn small" onClick={() => { setOpen("password"); setError(""); }}>Change password</button>
             <a className="btn small" href="/privacy.html" target="_blank" rel="noreferrer">What imy stores</a>
             <a className="btn small" href="/terms.html" target="_blank" rel="noreferrer">Terms</a>
+            {contact && <a className="btn small" href={`mailto:${contact}`} title={contact}>Contact us</a>}
             <button className="btn small" onClick={signOut} disabled={busy}>Sign out</button>
             <button className="btn small ghost danger" onClick={() => { setOpen("delete"); setError(""); }}>
               Delete everything
