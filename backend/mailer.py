@@ -36,6 +36,8 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 # site is only on your laptop, and mail apps that block outside images still show it.
 LOGO = Path(__file__).resolve().parent / "assets" / "email-logo.png"
 LOGO_CID = "imy-logo"
+PDYN = Path(__file__).resolve().parent / "assets" / "pdyn-logo.png"   # the maker's mark, at the foot of every email
+PDYN_CID = "pdyn-logo"
 
 
 class MailError(Exception):
@@ -153,6 +155,9 @@ def build(frm: str, to: str, subject: str, text: str, html_body: str | None = No
         if f"cid:{LOGO_CID}" in html_body and LOGO.is_file():
             msg.get_payload()[1].add_related(LOGO.read_bytes(), "image", "png", cid=f"<{LOGO_CID}>",
                                              disposition="inline", filename="imy-logo.png")
+        if f"cid:{PDYN_CID}" in html_body and PDYN.is_file():
+            msg.get_payload()[1].add_related(PDYN.read_bytes(), "image", "png", cid=f"<{PDYN_CID}>",
+                                             disposition="inline", filename="pdyn-technologies.png")
     return msg
 
 
@@ -198,6 +203,9 @@ def _page(title: str, preheader: str, body: str, footer: str) -> str:
             f'style="display:block;border:0;outline:none;margin:0 0 26px -4px;width:156px;height:48px">'
             if LOGO.is_file() else
             f'<p style="margin:0 0 26px;font-family:{FONT};font-size:18px;font-weight:800;color:{INK}">IMY</p>')
+    pdyn = (f'<tr><td style="padding:18px 12px 0;text-align:center"><img src="cid:{PDYN_CID}" width="140" height="35" '
+            f'alt="PDYN Technologies" style="display:inline-block;border:0;outline:none;width:140px;height:35px"></td></tr>\n'
+            if PDYN.is_file() else "")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark">
@@ -213,7 +221,7 @@ def _page(title: str, preheader: str, body: str, footer: str) -> str:
 {body}
 </td></tr>
 <tr><td style="padding:22px 12px 0;text-align:center">{footer}</td></tr>
-</table>
+{pdyn}</table>
 </td></tr></table>
 </body></html>"""
 

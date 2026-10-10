@@ -233,7 +233,7 @@ def test_the_email_goes_out_encrypted_with_both_versions(monkeypatch):
     assert msg["From"] == "imy.app@gmail.com" and msg["To"] == "diane@example.com"
     assert msg["Reply-To"] == "help@imy.example.com" and msg["Message-ID"]
     kinds = [p.get_content_type() for p in msg.walk()]
-    assert kinds == ["multipart/alternative", "text/plain", "multipart/related", "text/html", "image/png"]
+    assert kinds == ["multipart/alternative", "text/plain", "multipart/related", "text/html", "image/png", "image/png"]   # imy logo + PDYN mark
     logo = [p for p in msg.walk() if p.get_content_type() == "image/png"][0]
     assert logo["Content-ID"] == "<imy-logo>" and 'src="cid:imy-logo"' in html     # the logo travels inside
     assert logo.get_content() == mailer.LOGO.read_bytes()
