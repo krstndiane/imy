@@ -1589,6 +1589,7 @@ def feedback_inbox() -> list[str]:
 
 class VisitIn(BaseModel):
     page: str = ""              # landing | app
+    tz: str = ""                # the browser's time zone (e.g. Asia/Manila): roughly where, for the admin map
 
 
 @app.post("/api/visit")
@@ -1597,7 +1598,11 @@ def count_visit(body: VisitIn, request: Request = None):
     counted (bots and Do Not Track aren't) is nobody's business but the admin page's."""
     rate_limit(request, "visit")
     if request is not None:
-        insights.count_visit(body.page, visitor(request), request.headers.get("user-agent", ""), request.headers)
+        counted = insights.count_visit(body.page, visitor(request), request.headers.get("user-agent", ""),
+                                       request.headers, body.tz)
+        me = auth.current()
+        if me and counted:
+            insights.note_tz(me["id"], body.tz)
     return {"ok": True}
 
 
@@ -1684,6 +1689,11 @@ def admin_logout(request: Request = None):
 @app.get("/api/admin/stats")
 def admin_stats(days: int = 30):
     return insights.stats(max(7, min(days, 365)))
+
+
+@app.get("/api/admin/places")
+def admin_places(days: int = 30):
+    return insights.places(max(1, min(days, 365)))
 
 
 @app.get("/api/admin/accounts")

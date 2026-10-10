@@ -142,6 +142,12 @@ CREATE TABLE IF NOT EXISTS visit_seen (
   vhash TEXT NOT NULL,                  -- a code that changes every day; deleted the next day
   PRIMARY KEY (day, page, vhash)
 );
+CREATE TABLE IF NOT EXISTS place_days (
+  day TEXT NOT NULL,
+  tz TEXT NOT NULL,                     -- the visitor's time zone, e.g. Asia/Manila: roughly where they are
+  visitors INTEGER NOT NULL DEFAULT 0,  -- different visitors from there that day
+  PRIMARY KEY (day, tz)
+);
 CREATE TABLE IF NOT EXISTS visit_salt (
   day TEXT PRIMARY KEY,
   salt TEXT NOT NULL                    -- thrown away the next day, so old codes can't be traced back
@@ -203,6 +209,8 @@ MIGRATIONS = [
     # Set when the account proves it can read its inbox (used an emailed reset or admin link). An
     # admin email's account can open /admin with its password only after that (or on your own computer).
     ("users", "email_verified_at", "TEXT"),
+    # The time zone this account last used imy from (e.g. Asia/Manila), for the admin page's map.
+    ("users", "tz", "TEXT"),
 ]
 
 

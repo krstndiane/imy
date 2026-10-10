@@ -314,3 +314,42 @@ def test_the_contact_address_is_public_but_admin_addresses_are_not(monkeypatch):
     assert status["contact"] == "team@imy.test" and "personal@example.com" not in str(status)
     got = main.admin_link(main.AdminLinkIn(email="stranger@example.com"))   # live site: no hint
     assert "personal@example.com" not in str(got)
+
+
+# ---------------------------------------------------------------- the map
+def test_places_come_from_time_zones_once_a_day_per_person(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch)
+    insights.count_visit("landing", "1.1.1.1", UA, {}, "Asia/Manila")
+    insights.count_visit("app", "1.1.1.1", UA, {}, "Asia/Manila")        # same person, second page: once
+    insights.count_visit("landing", "2.2.2.2", UA, {}, "Asia/Manila")
+    insights.count_visit("landing", "3.3.3.3", UA, {}, "Asia/Calcutta")  # an old name still lands in India
+    insights.count_visit("landing", "4.4.4.4", UA, {}, "Mars/Olympus")   # not a real zone: counted, not placed
+    insights.count_visit("landing", "5.5.5.5", UA, {"dnt": "1"}, "Europe/Paris")
+    got = insights.places()
+    by_city = {p["city"]: p for p in got["places"]}
+    assert by_city["Manila"]["visitors"] == 2 and by_city["Manila"]["country"] == "Philippines"
+    assert by_city["Kolkata"]["visitors"] == 1 and by_city["Kolkata"]["country"] == "India"
+    assert "Paris" not in by_city and len(got["places"]) == 2 and got["countries"] == 2
+    assert round(by_city["Manila"]["lat"]) == 15 and round(by_city["Manila"]["lon"]) == 121
+
+
+def test_accounts_are_placed_by_the_zone_they_last_used(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch)
+    me = client(auth, "a@example.com")
+    insights.saw(me["id"])
+    insights.note_tz(me["id"], "America/New_York")
+    insights.note_tz(me["id"], "not/a-zone")                              # ignored
+    spot = insights.places()["places"][0]
+    assert spot["city"] == "New York" and spot["accounts"] == 1 and spot["visitors"] == 0
+
+
+def test_the_visit_route_notes_a_signed_in_accounts_zone(monkeypatch):
+    auth, insights, main, _ = fresh(monkeypatch)
+    me = client(auth, "a@example.com")
+    insights.saw(me["id"])
+
+    class Req:
+        headers = {"user-agent": UA}
+        client = type("C", (), {"host": "9.9.9.9"})()
+    main.count_visit(main.VisitIn(page="app", tz="Asia/Tokyo"), Req())
+    assert insights.places()["places"][0]["city"] == "Tokyo"

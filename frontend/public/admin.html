@@ -105,6 +105,22 @@
     .list .main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
     .list .side { color: var(--muted); font-size: 12px; white-space: nowrap; }
 
+    /* ---- world map ---- */
+    .map-card { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 0; padding: 0; overflow: hidden;
+      background: radial-gradient(120% 140% at 50% 45%, #0b1a33 0%, #070f1f 55%, #05090f 100%); border-color: #17233a; }
+    .map-wrap { position: relative; min-width: 0; padding: 18px 10px 12px 14px; }
+    .map-wrap canvas { position: absolute; left: 14px; top: 18px; display: block; }
+    .map-box { position: relative; width: 100%; }
+    .map-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #8fb3e8; font-size: 13px; pointer-events: none; text-shadow: 0 0 12px rgba(57,135,229,.6); }
+    .map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: #9db4d6; font-size: 12px; margin-top: 10px; }
+    .map-legend .sw { display: inline-block; border-radius: 50%; background: #d95926; box-shadow: 0 0 8px 2px rgba(255,122,51,.65); vertical-align: middle; margin-right: 6px; }
+    .map-side { border-left: 1px solid #17233a; padding: 18px 18px 14px; background: rgba(5,9,15,.35); min-width: 0; }
+    .map-side .big { font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+    .map-side .list li { border-top-color: #17233a; }
+    .map-side .list .rank { color: var(--muted); width: 18px; display: inline-block; }
+    #map-tip b { color: #fff; }
+    @media (max-width: 860px) { .map-card { grid-template-columns: 1fr; } .map-side { border-left: 0; border-top: 1px solid #17233a; } }
+
     /* ---- tables ---- */
     .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -194,6 +210,30 @@
         </div>
         <div class="tiles" id="tiles"></div>
 
+        <div class="section-head" style="margin-top:4px">
+          <h2>Where people use imy</h2>
+          <div class="seg" role="group" aria-label="Show on the map">
+            <button type="button" aria-pressed="true" data-map="visitors">Visitors</button>
+            <button type="button" aria-pressed="false" data-map="accounts">Accounts</button>
+          </div>
+        </div>
+        <div class="card map-card">
+          <div class="map-wrap">
+            <div class="map-box" id="map-box">
+              <canvas id="map-land" aria-hidden="true"></canvas>
+              <canvas id="map-dots" role="img" aria-label="World map of where people use imy. The list beside it has the same numbers."></canvas>
+              <div class="tip hidden" id="map-tip" role="status"></div>
+              <div class="map-empty hidden" id="map-empty">No one yet. Dots appear as people visit.</div>
+            </div>
+            <div class="map-legend" id="map-legend"></div>
+          </div>
+          <aside class="map-side">
+            <div><span class="big num" id="map-places">0</span> <span class="muted">places</span> · <span class="num" id="map-countries">0</span> <span class="muted">countries</span></div>
+            <ol class="list" id="map-list"></ol>
+            <p class="muted small" style="margin:10px 0 0">Last 30 days. Placed by time zone: everyone in one time zone shares a dot at its main city. Nobody’s address is looked up.</p>
+          </aside>
+        </div>
+
         <div class="section-head">
           <h2>Last 30 days</h2>
           <div class="seg" role="group" aria-label="Show as">
@@ -249,6 +289,9 @@
     </footer>
   </div>
 
+  <!-- Land for the map: Natural Earth 110m land (public domain, via vega-datasets), sampled on a 1.5°
+       grid from 80°N to 56°S. Each row lists runs of land as [first column, how many]. -->
+  <script type="application/json" id="world-dots">{"step":1.5,"top":80,"bottom":-56,"cols":240,"rows":91,"runs":[[58,11,75,32,127,7,183,4,188,1],[44,3,56,1,61,7,72,35,130,2,134,2],[38,3,43,1,47,1,52,3,58,1,74,32,161,4,185,10],[44,2,56,1,59,8,82,25,157,3,178,16,212,1,219,1],[37,5,49,1,52,3,56,3,61,1,63,6,83,21,156,2,174,25,202,3,214,2],[36,4,41,9,53,4,60,11,83,22,154,3,165,3,169,1,171,35,213,7],[12,9,34,1,44,8,56,3,62,13,84,18,135,5,165,62],[9,34,44,3,57,4,63,3,69,5,86,16,131,14,160,4,166,3,170,70],[0,3,11,55,69,1,72,5,84,14,129,18,149,1,152,16,169,71],[1,5,8,54,71,4,76,2,85,10,104,6,128,7,136,7,147,93],[13,48,62,4,71,6,85,8,105,5,127,7,136,8,145,94],[10,49,64,1,73,2,76,1,86,6,124,8,134,106],[10,47,68,4,87,4,123,8,134,90,226,2,229,6],[12,6,19,1,26,31,68,6,76,1,124,8,139,84,227,2],[15,2,29,29,68,10,116,2,124,1,128,3,136,78,226,2],[14,1,31,30,69,10,116,2,125,2,128,3,134,78,224,5],[11,1,32,32,68,12,117,2,126,1,134,77,224,4],[31,1,34,31,67,15,114,2,118,2,126,88,224,3],[35,31,67,16,114,1,117,4,123,92,224,2],[35,45,82,1,117,2,121,93,215,1],[36,1,38,37,78,1,81,3,119,95],[37,36,74,3,80,5,118,95],[37,40,78,2,119,21,142,1,145,8,155,57],[37,38,76,2,119,9,130,9,142,1,145,6,154,57,214,1],[37,36,114,9,127,2,131,8,147,5,154,56,214,3],[37,36,114,8,128,3,133,6,142,2,148,4,156,51,213,1],[37,34,114,6,126,1,130,1,133,3,138,16,155,45,201,5,213,2],[38,32,114,6,134,1,138,15,156,42,203,2,213,1],[38,31,114,5,126,1,129,1,134,1,138,16,156,46,204,2,212,2],[39,30,116,1,119,8,144,56,204,2,211,3],[40,28,115,12,144,56,207,4],[42,25,114,15,134,1,143,58,206,2],[42,1,44,22,113,18,133,5,140,1,143,58],[43,1,45,15,64,2,114,38,154,47],[44,1,46,10,65,1,112,40,154,47],[44,2,47,8,65,3,111,32,144,9,156,1,158,42],[45,1,48,7,110,33,145,9,157,1,160,3,164,35],[46,1,49,6,109,35,146,13,165,33,200,1],[50,5,65,3,109,35,146,14,166,14,181,15,200,1],[50,5,60,2,68,2,109,36,146,13,169,9,182,9,193,1],[16,1,50,6,59,3,71,3,109,36,147,12,169,8,182,8,192,2],[52,9,68,1,109,37,148,9,169,7,183,8,200,1],[54,7,109,37,149,6,169,5,183,1,185,7,200,1],[58,6,108,39,149,4,170,3,185,8,200,1],[62,2,109,39,149,1,170,4,186,7,200,1,202,1],[62,2,73,1,109,40,170,3,186,1,189,4,203,1],[63,1,70,6,77,1,110,44,171,2,190,1,199,1,202,1],[64,3,69,11,111,43,171,1,173,1,185,2,203,1],[68,13,112,41,173,1,186,1,201,1,203,1],[68,16,113,7,123,30,187,1,197,2,203,1],[68,18,126,26,184,2,187,2,196,3],[68,18,126,25,185,2,188,1,194,4],[67,20,126,24,186,2,193,6,205,1],[66,22,126,22,186,3,193,5],[66,24,126,22,187,3,193,5,200,1,208,1],[67,27,127,20,188,3,196,2,199,1,201,1,204,3,208,7],[66,29,128,18,189,2,211,6,221,1],[66,31,128,18,191,1,209,1,212,6,223,1],[67,30,129,17,193,3,212,4,217,1],[68,28,129,17,203,1,218,2,227,1],[68,27,129,18],[69,26,129,18,207,4],[69,25,128,19,152,1,207,4,214,2],[70,24,128,19,151,3,203,8,214,3],[72,22,128,18,150,3,202,10,214,3,239,1],[73,21,128,16,149,4,201,16],[73,20,129,14,150,3,200,19],[73,20,129,14,149,3,197,23,230,1],[73,19,130,14,149,3,196,25],[73,16,130,14,149,3,196,25],[73,15,130,12,196,26],[73,15,130,12,196,26],[72,15,131,10,196,26],[72,15,132,8,197,25],[72,14,132,8,197,9,208,14],[72,13,132,6,197,6,210,11],[72,9,82,2,197,2,210,1,212,9,235,1],[71,11,213,7],[71,11,214,6,236,2],[71,8,236,2],[71,7,216,1,237,1],[71,7,217,2,234,2],[71,6,233,2],[70,5,231,3],[70,5],[70,6],[70,5],[70,4],[71,3],[72,3],[]]}</script>
   <script>
   (() => {
     'use strict';
@@ -408,6 +451,7 @@
       history.replaceState(null, '', url);
       if (name === 'accounts') loadAccounts();
       if (name === 'feedback') loadFeedback();
+      if (name === 'overview' && mapSize) { sizeMap(); renderMap(); }   // it can't measure itself while hidden
     }
     tabs.forEach((t, i) => {
       t.addEventListener('click', () => openTab(t.dataset.tab));
@@ -439,6 +483,7 @@
       badge.classList.toggle('hidden', !stats.feedback_new);
       $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
       loadSideLists();
+      loadPlaces();
     }
 
     function tile(label, value, sub) {
@@ -567,7 +612,10 @@
     let resizeT = 0;
     addEventListener('resize', () => {
       clearTimeout(resizeT);
-      resizeT = setTimeout(() => { if (stats && !$('charts').classList.contains('hidden')) renderCharts(); }, 150);
+      resizeT = setTimeout(() => {
+        if (stats && !$('charts').classList.contains('hidden')) renderCharts();
+        if (mapSize && !$('panel-overview').classList.contains('hidden')) { sizeMap(); renderMap(); }
+      }, 150);
     });
 
     async function loadSideLists() {
@@ -580,6 +628,169 @@
         $('latest-fb').replaceChildren(...(latest.length ? latest.map((f) => h('li', null,
           h('span', { class: 'main' }, `${f.kind_label}: ${f.message}`), h('span', { class: 'side' }, ago(f.created_at)))) : [h('li', { class: 'muted' }, 'No feedback yet.')]));
       } catch { /* the tiles above still show */ }
+    }
+
+    // ---------------------------------------------------------------- the world map
+    // Two canvases: the glowing blue land (drawn when the size changes) and the orange dots on top
+    // (redrawn every frame for the slow pulse). Positions are plain longitude/latitude on a flat map.
+    const WORLD = JSON.parse(document.getElementById('world-dots').textContent);
+    const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let places = [], mapMode = 'visitors', mapSize = null, spots = [], mapFrame = 0;
+
+    function sizeMap() {
+      const box = $('map-box');
+      const w = Math.max(260, box.clientWidth);
+      const h = Math.round(w * (WORLD.rows / WORLD.cols));
+      box.style.height = h + 'px';
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      for (const c of [$('map-land'), $('map-dots')]) {
+        c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+        c.style.width = w + 'px'; c.style.height = h + 'px';
+        c.style.left = '0'; c.style.top = '0';
+      }
+      mapSize = { w, h, dpr };
+      drawLand();
+    }
+
+    function drawLand() {
+      const { w, h, dpr } = mapSize;
+      const cell = w / WORLD.cols;
+      // 1. every land dot, crisp, on a scratch canvas
+      const scratch = document.createElement('canvas');
+      scratch.width = w * dpr; scratch.height = h * dpr;
+      const s = scratch.getContext('2d');
+      s.scale(dpr, dpr);
+      const r = Math.max(0.55, cell * 0.3);
+      WORLD.runs.forEach((runs, row) => {
+        const y = (row + 0.5) * (h / WORLD.rows);
+        for (let i = 0; i < runs.length; i += 2) {
+          for (let c = runs[i]; c < runs[i] + runs[i + 1]; c++) {
+            // a little shimmer, the same on every load: brighter here and there, like lights
+            const n = Math.sin(c * 12.9898 + row * 78.233) * 43758.5453;
+            const lit = n - Math.floor(n);
+            s.globalAlpha = 0.38 + 0.5 * lit * lit;
+            s.fillStyle = lit > 0.93 ? '#9ec5f4' : '#3987e5';
+            s.beginPath(); s.arc((c + 0.5) * cell, y, r, 0, Math.PI * 2); s.fill();
+          }
+        }
+      });
+      // 2. the glow: the same dots drawn once with a soft blue shadow, then crisp on top
+      const ctx = $('map-land').getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w * dpr, h * dpr);
+      ctx.save();
+      ctx.shadowColor = 'rgba(57, 135, 229, 0.95)';
+      ctx.shadowBlur = 14 * dpr;
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(scratch, 0, 0);
+      ctx.restore();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.55;
+      ctx.drawImage(scratch, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
+
+    const project = (lat, lon) => ({
+      x: ((lon + 180) / 360) * mapSize.w,
+      y: ((WORLD.top - lat) / (WORLD.top - WORLD.bottom)) * mapSize.h,
+    });
+
+    const placeName = (p) => p.city + (p.country && p.country !== p.city ? ', ' + p.country : '');
+    // dots shrink with the map, so a phone-sized map isn't covered by them
+    const dotScale = () => Math.min(1, Math.max(0.45, mapSize.w / 900));
+    const dotR = (v, max) => (3.5 + 8.5 * Math.sqrt(v / max)) * dotScale();
+
+    function layoutSpots() {
+      const shown = places.filter((p) => p[mapMode] > 0);
+      const max = Math.max(1, ...shown.map((p) => p[mapMode]));
+      spots = shown.map((p, i) => ({ ...p, ...project(p.lat, p.lon), r: dotR(p[mapMode], max), phase: (i * 0.37) % 1 }));
+      $('map-empty').classList.toggle('hidden', spots.length > 0);
+      return max;
+    }
+
+    function drawSpots(t) {
+      const { w, h, dpr } = mapSize;
+      const ctx = $('map-dots').getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      // smallest last, so a small place next to a big one stays visible
+      for (const p of [...spots].sort((a, b) => b.r - a.r)) {
+        if (!reduceMotion) {          // a slow ring, like a beacon
+          const k = ((t / 2600) + p.phase) % 1;
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1 + 1.6 * k), 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255, 122, 51, ${0.55 * (1 - k)})`; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+        ctx.save();
+        ctx.shadowColor = 'rgba(255, 122, 51, 0.9)'; ctx.shadowBlur = 16 * dotScale();
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = '#d95926'; ctx.fill();
+        ctx.restore();
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.2, p.r * 0.38), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 214, 186, 0.9)'; ctx.fill();      // the hot centre
+        ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(7, 15, 31, 0.9)';     // a ring of map colour keeps touching dots apart
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 1, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+
+    function animate(t) {
+      mapFrame = 0;
+      if (!mapSize || $('panel-overview').classList.contains('hidden') || document.hidden) return;
+      drawSpots(t);
+      if (!reduceMotion && spots.length) mapFrame = requestAnimationFrame(animate);
+    }
+    function startMap() { if (!mapFrame) mapFrame = requestAnimationFrame(animate); }
+
+    function renderMap(data) {
+      if (data) places = data.places;
+      if (!mapSize) sizeMap();
+      const max = layoutSpots();
+      $('map-places').textContent = n(spots.length);
+      $('map-countries').textContent = n(new Set(spots.map((p) => p.country).filter(Boolean)).size);
+      const unit = mapMode === 'visitors' ? ['visitor', 'visitors'] : ['account', 'accounts'];
+      const top = [...spots].sort((a, b) => b[mapMode] - a[mapMode]).slice(0, 8);
+      $('map-list').replaceChildren(...(top.length ? top.map((p, i) => h('li', null,
+        h('span', { class: 'main' }, h('span', { class: 'rank' }, i + 1), placeName(p)),
+        h('span', { class: 'side num' }, n(p[mapMode])))) : [h('li', { class: 'muted' }, 'Nobody yet.')]));
+      const sizes = top.length ? [...new Set([1, Math.round(max / 2), max])].filter((v) => v >= 1 && v <= max) : [];
+      $('map-legend').replaceChildren(...(sizes.length ? [h('span', null, 'Dot size:'), ...sizes.map((v) => {
+        const d = 2 * dotR(v, max);
+        return h('span', null, h('span', { class: 'sw', style: `width:${d}px;height:${d}px` }), `${n(v)} ${v === 1 ? unit[0] : unit[1]}`);
+      })] : []));
+      drawSpots(performance.now());
+      startMap();
+    }
+
+    function mapHover(e) {
+      const tip = $('map-tip');
+      if (!spots.length) return;
+      const box = $('map-box').getBoundingClientRect();
+      const pt = e.touches ? e.touches[0] : e;
+      const x = pt.clientX - box.left, y = pt.clientY - box.top;
+      let best = null, bestD = Infinity;
+      for (const p of spots) {
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < Math.max(p.r + 8, 14) && d < bestD) { best = p; bestD = d; }
+      }
+      if (!best) { tip.classList.add('hidden'); return; }
+      tip.replaceChildren(h('b', null, placeName(best)),
+        h('div', null, `${n(best.visitors)} ${best.visitors === 1 ? 'visitor' : 'visitors'} · ${n(best.accounts)} active ${best.accounts === 1 ? 'account' : 'accounts'}`));
+      tip.style.left = `${Math.min(mapSize.w - 90, Math.max(90, best.x))}px`;
+      tip.style.top = `${best.y - best.r}px`;
+      tip.classList.remove('hidden');
+    }
+    $('map-box').addEventListener('mousemove', mapHover);
+    $('map-box').addEventListener('mouseleave', () => $('map-tip').classList.add('hidden'));
+    $('map-box').addEventListener('touchstart', mapHover, { passive: true });
+    document.querySelectorAll('[data-map]').forEach((b) => b.addEventListener('click', () => {
+      mapMode = b.dataset.map;
+      document.querySelectorAll('[data-map]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      renderMap();
+    }));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && mapSize) startMap(); });
+
+    async function loadPlaces() {
+      try { renderMap(await api('places')); } catch { /* the rest of the page still works */ }
     }
 
     // ---------------------------------------------------------------- accounts

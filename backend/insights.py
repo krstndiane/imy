@@ -29,8 +29,14 @@ What's counted, and how (the privacy page says the same in plain words)
                   once a day. The codes and the day's secret are deleted the next day, so visits
                   can't be linked across days or traced back to anyone. Browsers that send
                   "Do Not Track" or "Global Privacy Control" aren't counted at all.
+    Places        the time zone the browser reports (like Asia/Manila), counted per day, and the last one
+                  each account used. That's what puts the dots on the admin page's map: everyone in
+                  one time zone shares a dot at that zone's main city. No addresses are looked up and
+                  nothing is sent anywhere; the table of zones is in assets/timezones.json (built from
+                  the tz database, so it knows old names like Asia/Calcutta too).
 """
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -38,6 +44,7 @@ import threading
 import time
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from .db import db, now
 
@@ -190,7 +197,7 @@ def _salt(conn, day: str) -> str:
     return conn.execute("SELECT salt FROM visit_salt WHERE day = ?", (day,)).fetchone()["salt"]
 
 
-def count_visit(page: str, address: str, user_agent: str, headers) -> bool:
+def count_visit(page: str, address: str, user_agent: str, headers, tz: str = "") -> bool:
     """Count one page view. Returns False when it wasn't counted (bot, Do Not Track, unknown page)."""
     if page not in PAGES:
         return False
@@ -206,7 +213,64 @@ def count_visit(page: str, address: str, user_agent: str, headers) -> bool:
         conn.execute("INSERT OR IGNORE INTO visit_days (day, page) VALUES (?, ?)", (day, page))
         conn.execute("UPDATE visit_days SET views = views + 1, visitors = visitors + ? WHERE day = ? AND page = ?",
                      (1 if new else 0, day, page))
+        tz = clean_tz(tz)
+        # Once a day per person for the map, whichever page they opened first.
+        if tz and conn.execute("INSERT OR IGNORE INTO visit_seen (day, page, vhash) VALUES (?, 'place', ?)",
+                               (day, code)).rowcount:
+            conn.execute("INSERT OR IGNORE INTO place_days (day, tz) VALUES (?, ?)", (day, tz))
+            conn.execute("UPDATE place_days SET visitors = visitors + 1 WHERE day = ? AND tz = ?", (day, tz))
     return True
+
+
+# ---------------------------------------------------------------- places (time zones)
+_ZONES: dict | None = None
+
+
+def zones() -> dict:
+    """{"Asia/Manila": [lat, lon, "Manila", "Philippines"], ...}"""
+    global _ZONES
+    if _ZONES is None:
+        try:
+            _ZONES = json.loads((Path(__file__).resolve().parent / "assets" / "timezones.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _ZONES = {}
+    return _ZONES
+
+
+def clean_tz(tz: str) -> str:
+    """The time zone if it's a real one, else "" (whatever a browser sends is checked against the table)."""
+    tz = (tz or "").strip()[:64]
+    return tz if tz in zones() else ""
+
+
+def note_tz(user_id: int, tz: str) -> None:
+    tz = clean_tz(tz)
+    if tz:
+        with db() as conn:
+            conn.execute("UPDATE users SET tz = ? WHERE id = ? AND (tz IS NULL OR tz != ?)", (tz, user_id, tz))
+
+
+def places(days: int = 30) -> dict:
+    """Where people used imy in the last `days` days: one entry per place, with how many visitors
+    (each counted once a day) and how many active accounts are there."""
+    since = _days(days)[0]
+    with db() as conn:
+        seen = conn.execute("SELECT tz, SUM(visitors) AS n FROM place_days WHERE day >= ? GROUP BY tz", (since,)).fetchall()
+        accts = conn.execute("SELECT tz, COUNT(*) AS n FROM users WHERE tz IS NOT NULL AND id IN "
+                             "(SELECT DISTINCT user_id FROM active_days WHERE day >= ?) GROUP BY tz", (since,)).fetchall()
+    merged: dict[tuple, dict] = {}
+    for rows, key in ((seen, "visitors"), (accts, "accounts")):
+        for r in rows:
+            z = zones().get(r["tz"])
+            if not z:
+                continue
+            lat, lon, city, country = z
+            spot = merged.setdefault((lat, lon), {"lat": lat, "lon": lon, "city": city, "country": country,
+                                                  "visitors": 0, "accounts": 0})
+            spot[key] += r["n"] or 0
+    out = sorted(merged.values(), key=lambda p: (-(p["visitors"] + p["accounts"]), p["city"]))
+    return {"days": days, "places": out,
+            "countries": len({p["country"] for p in out if p["country"]})}
 
 
 # ---------------------------------------------------------------- tidying up
@@ -219,6 +283,7 @@ def sweep() -> None:
             conn.execute("DELETE FROM visit_seen WHERE day < ?", (day,))
             conn.execute("DELETE FROM visit_salt WHERE day < ?", (day,))
             conn.execute("DELETE FROM active_days WHERE day < ?", (old,))
+            conn.execute("DELETE FROM place_days WHERE day < ?", (old,))
             conn.execute("DELETE FROM admin_links WHERE expires_at <= ?", (_utc(-timedelta(days=1)),))
             conn.execute("DELETE FROM admin_sessions WHERE expires_at <= ?", (now(),))
     except Exception as exc:

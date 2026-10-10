@@ -465,8 +465,10 @@
     }).catch(() => {});
 
     // Count this visit for the admin page: no cookies, nothing stored in your browser (see /privacy.html).
+    // The time zone (like Asia/Manila) is all that says roughly where: it puts a dot on the admin map.
+    function zone() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } }
     fetch('/api/visit', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ page: 'landing' }), keepalive: true }).catch(() => {});
+                          body: JSON.stringify({ page: 'landing', tz: zone() }), keepalive: true }).catch(() => {});
 
     // ---- platform switcher: swap the mockup's skin + a few words ----
     const PLATFORMS = {

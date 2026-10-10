@@ -58,6 +58,10 @@ const form = (url, fields, timeoutMs) => {
   return request(url, { method: "POST", body: data }, timeoutMs);
 };
 
+function timeZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; }
+}
+
 export const api = {
   health: () => send("GET", "/api/health", null, 8000),
   status: () => send("GET", "/api/status"),
@@ -77,7 +81,8 @@ export const api = {
   // A note for the people running imy (shown on the admin page). { kind, rating, message, can_reply, page }
   sendFeedback: (note) => send("POST", "/api/feedback", note),
   // "Someone opened the app today" for the admin page's counts. No cookies; see backend/insights.py.
-  visit: (page) => send("POST", "/api/visit", { page }, 5000),
+  // The time zone (e.g. Asia/Manila) is roughly where you are; it's a dot on the admin page's map.
+  visit: (page) => send("POST", "/api/visit", { page, tz: timeZone() }, 5000),
 
   questions: () => send("GET", "/api/questions"),
   persons: () => send("GET", "/api/persons"),
