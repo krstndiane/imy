@@ -215,3 +215,34 @@ def test_deleting_an_account_deletes_its_feedback_and_activity(monkeypatch):
     with db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM active_days").fetchone()[0] == 0
+
+
+# ---------------------------------------------------------------- your own computer
+def test_on_your_own_computer_the_page_says_why_no_link_came(monkeypatch):
+    _, insights, main, outbox = fresh(monkeypatch)
+    monkeypatch.setenv("IMY_PUBLIC_URL", "http://localhost:8000")
+    got = main.admin_link(main.AdminLinkIn(email="me@example.com"))
+    assert got["ok"] is False and "isn't an admin" in got["hint"] and "owner@imy.test" in got["hint"]
+    assert not outbox
+    monkeypatch.setenv("IMY_ADMIN_EMAILS", "")
+    monkeypatch.delenv("IMY_CONTACT_EMAIL", raising=False)
+    assert "No admin address is set" in main.admin_link(main.AdminLinkIn(email="me@example.com"))["hint"]
+
+
+def test_the_live_site_never_says_who_the_admins_are(monkeypatch):
+    _, insights, main, outbox = fresh(monkeypatch)
+    got = main.admin_link(main.AdminLinkIn(email="me@example.com"))
+    assert "hint" not in got and got["ok"] is True
+
+
+def test_the_command_line_prints_a_working_link(monkeypatch, capsys=None):
+    _, insights, main, _ = fresh(monkeypatch)
+    from backend import admin
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert admin.admin_link(None, "http://localhost:8000") == 0
+    token = re.search(r"/admin#login=([A-Za-z0-9_-]+)", out.getvalue()).group(1)
+    assert insights.use_admin_link(token)[0] == "owner@imy.test"
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert admin.admin_link("someone@example.com", None) == 1

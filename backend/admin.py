@@ -4,6 +4,8 @@
     python -m backend.admin usage                today's AI use: the site total and the busiest accounts
     python -m backend.admin remove EMAIL         show what removing this account would delete
     python -m backend.admin remove EMAIL --yes   ...and actually delete it (no undo)
+    python -m backend.admin link [EMAIL]         a sign-in link for the admin page (/admin), printed here
+                                                 instead of emailed - for when email isn't set up yet
 
 `remove` does exactly what "Delete everything" does in the app: the account, every person under
 it, their messages, chats, photos and screenshots, and every uploaded file. Use it for test
@@ -11,9 +13,11 @@ accounts before launch, and for deletion requests that come in by email.
 
 Make a backup first (python -m backend.backup) - there's no undo.
 """
+import os
 import sys
 
-from . import usage
+from . import claude  # noqa: F401  (importing it loads the .env file, like the web app does)
+from . import insights, usage
 from .db import db, init_db
 
 
@@ -70,6 +74,29 @@ def remove(email: str, really: bool) -> int:
     return 0
 
 
+def admin_link(email: str | None, site: str | None) -> int:
+    """Print a one-time admin sign-in link. Anyone who can run commands on the server can already
+    read everything, so handing them a link here gives nothing away - and it means a missing or
+    mistyped email password never locks the site's owner out of /admin."""
+    admins = insights.admin_emails()
+    if not admins:
+        print("No admin address is set. Add IMY_ADMIN_EMAILS=you@example.com (or IMY_CONTACT_EMAIL) to .env, "
+              "restart imy, and run this again.")
+        return 1
+    email = (email or admins[0]).strip().lower()
+    if not insights.is_admin_email(email):
+        print(f"{email} isn't an admin. Admin addresses (IMY_ADMIN_EMAILS): {', '.join(admins)}")
+        return 1
+    token = insights.start_admin_link(email)
+    if not token:
+        print("Too many links in the last hour (5 at most). Wait a little, or use one you already have.")
+        return 1
+    base = (site or os.environ.get("IMY_PUBLIC_URL", "").strip() or "http://localhost:8000").rstrip("/")
+    print(f"Admin sign-in link for {email} (works once, for {insights.LINK_MINUTES} minutes):\n\n  {base}/admin#login={token}\n")
+    print("Open it in the browser where you want to be signed in. Running imy on another port? Add --site http://localhost:PORT")
+    return 0
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     init_db()                                # adds any new columns, so this works on an older database
@@ -82,6 +109,10 @@ if __name__ == "__main__":
         show_usage()
     elif args[0] == "remove" and len(args) >= 2:
         sys.exit(remove(args[1], "--yes" in args))
+    elif args[0] == "link":
+        site = args[args.index("--site") + 1] if "--site" in args and args.index("--site") + 1 < len(args) else None
+        rest = [a for i, a in enumerate(args[1:], 1) if a != "--site" and args[i - 1] != "--site"]
+        sys.exit(admin_link(rest[0] if rest else None, site))
     else:
         print(__doc__)
         sys.exit(2)

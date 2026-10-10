@@ -311,9 +311,15 @@
       $('gate-send').disabled = true;
       try {
         const out = await api('link', { method: 'POST', body: { email }, public: true });
+        if (out.hint) {          // only ever sent on your own computer: why no link came
+          msg.className = 'small err';
+          msg.textContent = out.hint + ' You can also run  python -m backend.admin link  in a Terminal to get a link.';
+          return;
+        }
         msg.className = 'small note';
         msg.textContent = `If ${email} is an admin address, a sign-in link is on its way. It works once, for ${out.minutes} minutes.`
-          + (out.printed ? ' You’re on your own computer, so the link is also printed in the Terminal where imy is running.' : '');
+          + (out.printed ? ' You’re on your own computer, so the link is also printed in the Terminal where imy is running'
+             + ' (or run  python -m backend.admin link  in a new Terminal tab).' : '');
       } catch (err) {
         msg.textContent = err.message; msg.className = 'small err';
       } finally {

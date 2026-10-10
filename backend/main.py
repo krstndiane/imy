@@ -1613,6 +1613,14 @@ def admin_link(body: AdminLinkIn, request: Request = None):
         raise HTTPException(503, "imy can't send email yet, so the admin link can't be sent. Set IMY_SMTP_HOST and "
                                  "IMY_PUBLIC_URL (see backend/mailer.py).")
     token = insights.start_admin_link(email)
+    if not token and local:
+        # Your own computer: no need to keep it a secret who the admins are - say why, here and in the Terminal.
+        admins = insights.admin_emails()
+        why = (f"{email} isn't an admin address on this computer. Admins: {', '.join(admins)}." if admins and email not in admins
+               else "That address has asked for too many links this hour. Wait a little, or use the last one." if admins
+               else "No admin address is set. Add IMY_ADMIN_EMAILS=you@example.com to the .env file, then restart imy.")
+        print(f"[imy] no admin link sent: {why}", flush=True)
+        return {"ok": False, "minutes": insights.LINK_MINUTES, "printed": local, "hint": why}
     if token:
         link = f"{site}/admin#login={token}"
         mailer.send_later(email, *mailer.admin_link_email(link, insights.LINK_MINUTES), print_if_off=local)
