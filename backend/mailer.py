@@ -297,6 +297,48 @@ def changed_email(site: str, email: str = "") -> tuple[str, str, str]:
                                 body, _footer(site))
 
 
+def admin_link_email(link: str, minutes: int) -> tuple[str, str, str]:
+    """(subject, text, html) for the admin page's one-time sign-in link."""
+    subject = "Your imy admin sign-in link"
+    text = ("Sign in to the imy admin page\n\n"
+            f"Open this link to sign in:\n{link}\n\n"
+            f"It works once, for the next {minutes} minutes, in the browser you open it in.\n\n"
+            "Didn't ask for this? Ignore this email - nobody can sign in without the link.\n")
+    safe = html.escape(link, quote=True)
+    body = (_p("Tap the button to open the admin page. You’ll stay signed in for 12 hours.")
+            + _button(safe, "Sign in to admin")
+            + _p(f"The link works once, for the next {minutes} minutes.", size=14)
+            + '<div style="height:1px;background:#24242a;margin:6px 0 18px;line-height:1px;font-size:1px">&nbsp;</div>'
+            + _p("Button not working? Copy this link into your browser:", size=13, margin="0 0 6px")
+            + _p(f'<a href="{safe}" target="_blank" style="color:{LINK};word-break:break-all;text-decoration:underline">{safe}</a>',
+                 size=13, margin="0 0 16px")
+            + _p("Didn’t ask for this? Ignore this email. Nobody can sign in without the link.", size=13, margin="0 0 22px"))
+    site = link.split("#", 1)[0].rstrip("/")
+    site = site[:-len("/admin")] if site.endswith("/admin") else site
+    return subject, text, _page("Sign in to admin", f"Your one-time admin link. It works for {minutes} minutes.",
+                                body, _footer(site))
+
+
+def feedback_email(kind_label: str, message: str, rating: int | None, reply_to: str | None, site: str) -> tuple[str, str, str]:
+    """(subject, text, html) telling the admin that new feedback came in."""
+    stars = f"{rating}/5" if rating else "no rating"
+    first = " ".join(message.split())[:60]
+    subject = f"New imy feedback: {kind_label}" + (f" - {first}" if first else "")
+    who = reply_to or "Didn't ask for a reply"
+    admin = f"{site}/admin" if site else ""
+    text = (f"New feedback ({kind_label}, {stars})\n\n{message}\n\nFrom: {who}\n"
+            + (f"\nSee all feedback: {admin}\n" if admin else ""))
+    quote = html.escape(message).replace("\n", "<br>")
+    body = (_p(f'<span style="color:{INK};font-weight:600">{html.escape(kind_label)}</span> &nbsp;·&nbsp; {stars}', margin="0 0 12px")
+            + ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px">'
+               '<tr><td bgcolor="#1a1a1f" style="background:#1a1a1f;border:1px solid #2a2a31;border-radius:16px;padding:16px 18px 2px">'
+               + _p(quote, size=15, color=INK, margin="0 0 14px") + '</td></tr></table>')
+            + _p(("From " + f'<a href="mailto:{html.escape(reply_to, quote=True)}" style="color:{LINK}">{html.escape(reply_to)}</a>')
+                 if reply_to else "They didn’t ask for a reply.", size=14)
+            + (_button(html.escape(admin, quote=True), "Open the feedback inbox", solid=False) if admin else ""))
+    return subject, text, _page("New feedback", f"{kind_label}: {first}", body, _footer(site))
+
+
 # ---------------------------------------------------------------- python -m backend.mailer you@example.com
 if __name__ == "__main__":
     if len(sys.argv) != 2 or "@" not in sys.argv[1]:

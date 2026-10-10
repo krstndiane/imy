@@ -74,6 +74,10 @@ export const api = {
   checkReset: (token) => send("POST", "/api/auth/reset/check", { token }),
   resetPassword: (token, password) => send("POST", "/api/auth/reset", { token, password }),
   deleteAccount: (password, confirm) => send("DELETE", "/api/auth/account", { password, confirm }),
+  // A note for the people running imy (shown on the admin page). { kind, rating, message, can_reply, page }
+  sendFeedback: (note) => send("POST", "/api/feedback", note),
+  // "Someone opened the app today" for the admin page's counts. No cookies; see backend/insights.py.
+  visit: (page) => send("POST", "/api/visit", { page }, 5000),
 
   questions: () => send("GET", "/api/questions"),
   persons: () => send("GET", "/api/persons"),

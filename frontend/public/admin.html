@@ -1,0 +1,634 @@
+<!doctype html>
+<!-- The admin page (/admin): separate from the app clients use (/app). It shows how many people use
+     imy and what they sent as feedback - never anyone's chats. Sign-in is a one-time link emailed to
+     an admin address (backend/insights.py). Everything people typed is put on the page as text, never
+     as HTML, so feedback can't run code here. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'">
+  <title>imy admin</title>
+  <link rel="icon" href="/media/pdyn-logo.png">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0a0c; --surface: #141418; --surface-2: #1a1a1f; --line: #26262c; --line-2: #33333a;
+      --ink: #f5f6f8; --ink-2: #c3c8d2; --muted: #8b93a1;
+      --brand: #2563eb; --brand-2: #3b82f6; --series: #3987e5; --series-hover: #6da7ec;
+      --good: #0ca30c; --warn: #fab219; --bad: #d03b3b;
+      --r: 16px;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); }
+    body { min-height: 100vh; font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; overflow-x: clip; }
+    a { color: #7aa7ff; }
+    button, input, select { font: inherit; color: inherit; }
+    .hidden { display: none !important; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12.5px; }
+    .num { font-variant-numeric: tabular-nums; }
+
+    /* ---- buttons, inputs ---- */
+    .btn { border: 1px solid var(--line-2); background: var(--surface-2); border-radius: 999px; padding: 8px 14px;
+           font-weight: 600; font-size: 13px; cursor: pointer; text-decoration: none; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .btn:hover { border-color: #4a4a54; }
+    .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 0 22px rgba(37,99,235,.35); }
+    .btn.primary:hover { background: var(--brand-2); }
+    .btn.danger { color: #ff9b9b; }
+    .btn.ghost { background: transparent; }
+    .btn:disabled { opacity: .55; cursor: default; }
+    .btn:focus-visible, .tab:focus-visible, input:focus-visible, .seg button:focus-visible { outline: 2px solid var(--brand-2); outline-offset: 2px; }
+    input[type=email], input[type=search] { width: 100%; background: var(--bg); border: 1px solid var(--line-2); border-radius: 12px; padding: 11px 14px; outline: none; }
+    input[type=email]:focus, input[type=search]:focus { border-color: var(--brand-2); }
+
+    /* ---- sign-in ---- */
+    .gate { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+    .gate-card { width: min(400px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 28px; }
+    .gate-card img { height: 30px; width: auto; display: block; margin-bottom: 22px; }
+    .gate-card h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.01em; }
+    .gate-card p { margin: 0 0 18px; color: var(--ink-2); }
+    .gate-card form { display: grid; gap: 10px; }
+    .note { border: 1px solid var(--line-2); background: var(--surface-2); border-radius: 12px; padding: 12px 14px; color: var(--ink-2); }
+    .err { color: #ff9b9b; }
+
+    /* ---- shell ---- */
+    header.top { position: sticky; top: 0; z-index: 5; background: rgba(10,10,12,.86); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+    .bar { display: flex; align-items: center; gap: 14px; height: 60px; }
+    .bar img { height: 24px; width: auto; display: block; }
+    .bar .sep { width: 1px; height: 22px; background: var(--line-2); }
+    .bar .title { font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+    .bar .grow { flex: 1; }
+    .bar .who { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+    nav.tabs { display: flex; gap: 4px; padding: 0 0 10px; overflow-x: auto; }
+    .tab { border: 0; background: none; padding: 8px 14px; border-radius: 999px; color: var(--muted); font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .tab[aria-selected=true] { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+    .badge { display: inline-block; min-width: 18px; padding: 1px 6px; margin-left: 6px; border-radius: 999px; background: var(--brand); color: #fff; font-size: 11px; text-align: center; }
+    main.wrap { padding-top: 26px; padding-bottom: 60px; }
+    .updated { color: var(--muted); font-size: 12px; }
+
+    /* ---- overview ---- */
+    .hero { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 4px 0 22px; }
+    .hero .label { color: var(--ink-2); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .hero .value { font-size: 56px; font-weight: 700; letter-spacing: -.03em; line-height: 1; margin-top: 6px; }
+    .live { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(12,163,12,.18); }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
+    .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; min-width: 0; }
+    .tile .label { color: var(--ink-2); font-size: 12.5px; }
+    .tile .value { font-size: 26px; font-weight: 650; letter-spacing: -.02em; margin-top: 4px; }
+    .tile .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 26px 0 12px; }
+    .section-head h2 { font-size: 16px; margin: 0; }
+    .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+    .seg button { border: 0; background: none; border-radius: 999px; padding: 6px 12px; color: var(--muted); font-weight: 600; font-size: 12.5px; cursor: pointer; }
+    .seg button[aria-pressed=true] { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; min-width: 0; position: relative; }
+    .card h3 { margin: 0; font-size: 14px; }
+    .card .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .chart { position: relative; margin-top: 12px; height: 170px; }
+    .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .chart .empty { position: absolute; inset: 0 0 22px 34px; display: grid; place-items: center; color: var(--muted); font-size: 12.5px; pointer-events: none; }
+    .tip { position: absolute; pointer-events: none; background: #23232a; border: 1px solid var(--line-2); border-radius: 10px; padding: 6px 9px; font-size: 12px; white-space: nowrap; transform: translate(-50%, calc(-100% - 8px)); z-index: 2; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+    .tip b { font-size: 13px; }
+    .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+    .list { list-style: none; margin: 10px 0 0; padding: 0; }
+    .list li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); min-width: 0; }
+    .list li:first-child { border-top: 0; }
+    .list .main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .list .side { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+    /* ---- tables ---- */
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 10px 14px; border-top: 1px solid var(--line); white-space: nowrap; }
+    thead th { border-top: 0; color: var(--muted); font-weight: 600; font-size: 12px; background: var(--surface); position: sticky; top: 0; }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody tr:hover { background: #17171c; }
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 7px; vertical-align: 1px; }
+    .tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .tools input { max-width: 340px; }
+
+    /* ---- feedback ---- */
+    .fb { display: grid; gap: 10px; }
+    .fb-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; }
+    .fb-item.new { border-color: #2c3f66; box-shadow: inset 3px 0 0 var(--brand); }
+    .fb-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--muted); font-size: 12.5px; }
+    .pill { border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; color: var(--ink-2); font-weight: 600; font-size: 12px; }
+    .stars { color: var(--ink-2); letter-spacing: 1px; }
+    .fb-msg { margin: 10px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14.5px; color: var(--ink); }
+    .fb-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .fb-actions .from { color: var(--muted); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
+    .confirm { display: inline-flex; gap: 6px; align-items: center; color: #ffb4b4; font-size: 12.5px; }
+    .empty-state { text-align: center; color: var(--muted); padding: 40px 16px; border: 1px dashed var(--line-2); border-radius: var(--r); }
+    footer.foot { border-top: 1px solid var(--line); padding: 18px 0 28px; color: var(--muted); font-size: 12px; }
+    footer.foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+    footer.foot img { height: 20px; width: auto; opacity: .85; display: block; }
+
+    @media (max-width: 640px) {
+      .bar .who, .bar .sep, .bar .title-long { display: none; }
+      .hero .value { font-size: 48px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <!-- ===== sign in ===== -->
+  <section id="gate" class="gate hidden" aria-labelledby="gate-title">
+    <div class="gate-card">
+      <img src="/media/pdyn-logo.png" alt="PDYN Technologies">
+      <h1 id="gate-title">imy admin</h1>
+      <p>For the people running imy. We’ll email you a one-time sign-in link, no password needed.</p>
+      <form id="gate-form" novalidate>
+        <label class="small muted" for="gate-email">Admin email</label>
+        <input id="gate-email" type="email" autocomplete="email" required placeholder="you@example.com">
+        <button class="btn primary" type="submit" id="gate-send" style="justify-content:center;padding:11px 14px">Email me a sign-in link</button>
+        <p id="gate-msg" class="small" role="status" style="margin:4px 0 0"></p>
+      </form>
+      <p class="small muted" style="margin:18px 0 0">Using imy as a client? <a href="/app">Go to the app</a></p>
+    </div>
+  </section>
+
+  <!-- ===== dashboard ===== -->
+  <div id="dash" class="hidden">
+    <header class="top">
+      <div class="wrap">
+        <div class="bar">
+          <img src="/media/pdyn-logo.png" alt="PDYN Technologies">
+          <span class="sep" aria-hidden="true"></span>
+          <span class="title">imy <span class="title-long">admin</span></span>
+          <span class="grow"></span>
+          <span class="who" id="who"></span>
+          <a class="btn ghost" href="/" target="_blank" rel="noopener">Open site ↗</a>
+          <button class="btn" id="signout" type="button">Sign out</button>
+        </div>
+        <nav class="tabs" role="tablist" aria-label="Admin sections">
+          <button class="tab" role="tab" aria-selected="true" data-tab="overview" id="tab-overview">Overview</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="accounts" id="tab-accounts">Accounts</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="feedback" id="tab-feedback">Feedback<span class="badge hidden" id="fb-badge"></span></button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <!-- overview -->
+      <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+        <div class="hero">
+          <div>
+            <div class="label"><span class="live" aria-hidden="true"></span>Using imy right now</div>
+            <div class="value num" id="online">–</div>
+            <div class="muted small" id="online-sub">Signed-in people active in the last 5 minutes</div>
+          </div>
+          <div class="updated" id="updated" aria-live="polite"></div>
+        </div>
+        <div class="tiles" id="tiles"></div>
+
+        <div class="section-head">
+          <h2>Last 30 days</h2>
+          <div class="seg" role="group" aria-label="Show as">
+            <button type="button" aria-pressed="true" data-view="charts">Charts</button>
+            <button type="button" aria-pressed="false" data-view="table">Table</button>
+          </div>
+        </div>
+        <div class="charts" id="charts"></div>
+        <div class="table-wrap hidden" id="series-table"></div>
+
+        <div class="two" style="margin-top:22px">
+          <div class="card">
+            <h3>Newest accounts</h3>
+            <ul class="list" id="newest"></ul>
+          </div>
+          <div class="card">
+            <h3>Latest feedback</h3>
+            <ul class="list" id="latest-fb"></ul>
+          </div>
+        </div>
+        <p class="muted small" style="margin-top:18px">Visitors are counted without cookies: each person counts once a day, and browsers that ask not to be tracked aren’t counted. You never see anyone’s chats here.</p>
+      </section>
+
+      <!-- accounts -->
+      <section id="panel-accounts" role="tabpanel" aria-labelledby="tab-accounts" class="hidden">
+        <div class="tools">
+          <input type="search" id="acct-q" placeholder="Search by email" aria-label="Search accounts by email">
+          <span class="muted small" id="acct-count"></span>
+        </div>
+        <div class="table-wrap" id="acct-table"></div>
+      </section>
+
+      <!-- feedback -->
+      <section id="panel-feedback" role="tabpanel" aria-labelledby="tab-feedback" class="hidden">
+        <div class="tools">
+          <div class="seg" role="group" aria-label="Show feedback" id="fb-filter">
+            <button type="button" aria-pressed="true" data-status="new">New</button>
+            <button type="button" aria-pressed="false" data-status="read">Read</button>
+            <button type="button" aria-pressed="false" data-status="done">Done</button>
+            <button type="button" aria-pressed="false" data-status="">All</button>
+          </div>
+          <span class="muted small" id="fb-rating"></span>
+        </div>
+        <div class="fb" id="fb-list"></div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <span>imy admin · counts only, never anyone’s chats</span>
+        <img src="/media/pdyn-logo.png" alt="PDYN Technologies">
+      </div>
+    </footer>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const fmt = new Intl.NumberFormat();
+    const n = (v) => fmt.format(v || 0);
+
+    // Build elements from data. Text always goes in as text (never innerHTML), so nothing anyone
+    // typed into feedback can turn into code on this page.
+    function h(tag, attrs, ...kids) {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v == null || v === false) continue;
+        if (k === 'class') el.className = v;
+        else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? '' : String(v));
+      }
+      for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+      return el;
+    }
+    const svg = (tag, attrs) => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, String(v));
+      return el;
+    };
+
+    async function api(path, opts = {}) {
+      const res = await fetch('/api/admin/' + path, {
+        method: opts.method || 'GET', credentials: 'same-origin',
+        headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      let data = null;
+      try { data = await res.json(); } catch { /* empty answer */ }
+      if (res.status === 401 && !opts.public) { showGate(); throw new Error('signed out'); }
+      if (!res.ok) throw new Error((data && data.detail) || 'Something went wrong. Try again.');
+      return data;
+    }
+
+    // ---------------------------------------------------------------- dates
+    const parseDay = (d) => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd); };
+    const shortDay = (d) => parseDay(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const longDay = (d) => parseDay(d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    function ago(iso) {
+      if (!iso) return '—';
+      const t = new Date(iso).getTime(), s = Math.max(0, (Date.now() - t) / 1000);
+      if (s < 60) return 'just now';
+      if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+      if (s < 86400 * 7) return `${Math.floor(s / 86400)} d ago`;
+      return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    const joined = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+    // ---------------------------------------------------------------- sign in
+    function showGate(msg) {
+      $('dash').classList.add('hidden');
+      $('gate').classList.remove('hidden');
+      if (msg) { $('gate-msg').textContent = msg; $('gate-msg').className = 'small err'; }
+      stopPolling();
+    }
+    $('gate-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = $('gate-email').value.trim();
+      const msg = $('gate-msg');
+      if (!email) { msg.textContent = 'Type your admin email.'; msg.className = 'small err'; return; }
+      $('gate-send').disabled = true;
+      try {
+        const out = await api('link', { method: 'POST', body: { email }, public: true });
+        msg.className = 'small note';
+        msg.textContent = `If ${email} is an admin address, a sign-in link is on its way. It works once, for ${out.minutes} minutes.`
+          + (out.printed ? ' You’re on your own computer, so the link is also printed in the Terminal where imy is running.' : '');
+      } catch (err) {
+        msg.textContent = err.message; msg.className = 'small err';
+      } finally {
+        setTimeout(() => { $('gate-send').disabled = false; }, 4000);
+      }
+    });
+
+    async function start() {
+      const m = location.hash.match(/^#login=([A-Za-z0-9_-]+)$/);
+      if (m) {
+        history.replaceState(null, '', location.pathname);       // the link is used up; don't leave it in the address bar
+        try { await api('login', { method: 'POST', body: { token: m[1] }, public: true }); }
+        catch (err) { showGate(err.message); return; }
+      }
+      let me;
+      try { me = await api('me', { public: true }); } catch (err) { showGate(err.message); return; }
+      if (!me.admin) { showGate(); return; }
+      $('who').textContent = me.admin.email;
+      $('gate').classList.add('hidden');
+      $('dash').classList.remove('hidden');
+      openTab(new URLSearchParams(location.search).get('tab') || 'overview');
+      refresh();
+      startPolling();
+    }
+
+    $('signout').addEventListener('click', async () => {
+      try { await api('logout', { method: 'POST', public: true }); } catch { /* signed out anyway */ }
+      showGate();
+      $('gate-msg').textContent = 'Signed out.'; $('gate-msg').className = 'small muted';
+    });
+
+    // ---------------------------------------------------------------- tabs
+    const tabs = [...document.querySelectorAll('.tab')];
+    function openTab(name) {
+      if (!['overview', 'accounts', 'feedback'].includes(name)) name = 'overview';
+      tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+      for (const p of ['overview', 'accounts', 'feedback']) $('panel-' + p).classList.toggle('hidden', p !== name);
+      const url = name === 'overview' ? location.pathname : `${location.pathname}?tab=${name}`;
+      history.replaceState(null, '', url);
+      if (name === 'accounts') loadAccounts();
+      if (name === 'feedback') loadFeedback();
+    }
+    tabs.forEach((t, i) => {
+      t.addEventListener('click', () => openTab(t.dataset.tab));
+      t.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+        next.focus(); openTab(next.dataset.tab);
+      });
+    });
+
+    // ---------------------------------------------------------------- overview
+    let stats = null;
+    const CHARTS = [
+      { key: 'visitors', title: 'Homepage visitors', unit: 'visitor', unitPl: 'visitors' },
+      { key: 'active', title: 'Active accounts', unit: 'account', unitPl: 'accounts' },
+      { key: 'signups', title: 'Sign-ups', unit: 'sign-up', unitPl: 'sign-ups' },
+    ];
+
+    async function refresh() {
+      try {
+        stats = await api('stats');
+      } catch (err) {
+        if (err.message !== 'signed out') $('updated').textContent = err.message;
+        return;
+      }
+      renderOverview();
+      const badge = $('fb-badge');
+      badge.textContent = stats.feedback_new;
+      badge.classList.toggle('hidden', !stats.feedback_new);
+      $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      loadSideLists();
+    }
+
+    function tile(label, value, sub) {
+      return h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value num' }, value), sub ? h('div', { class: 'sub' }, sub) : null);
+    }
+
+    function renderOverview() {
+      const s = stats;
+      $('online').textContent = n(s.online);
+      $('online-sub').textContent = `Signed-in people active in the last ${s.online_minutes} minutes`;
+      $('tiles').replaceChildren(
+        tile('Active today', n(s.active_today), `${n(s.active_week)} this week · ${n(s.active_month)} this month`),
+        tile('Accounts', n(s.accounts), `+${n(s.signups_week)} this week · +${n(s.signups_today)} today`),
+        tile('Homepage visitors today', n(s.visitors_today), `${n(s.views_today)} page views · ${n(s.visitors_week)} this week`),
+        tile('Opened the app today', n(s.app_visitors_today), 'including the sign-in page'),
+        tile('New feedback', n(s.feedback_new), `${n(s.feedback_total)} in total`),
+        tile('AI replies today', n(s.ai_today), `${n(s.people)} people set up · ${n(s.messages_sent)} messages sent`),
+      );
+      renderCharts();
+      renderSeriesTable();
+    }
+
+    // Column charts, one per measure (each has its own scale, so they're side by side rather than
+    // sharing one axis). Hover or tap a day for its number; the Table view has every value.
+    function niceMax(v) {
+      if (v <= 4) return 4;
+      const p = Math.pow(10, Math.floor(Math.log10(v)));
+      for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+      return 10 * p;
+    }
+
+    function columnChart(box, series, key, def) {
+      box.replaceChildren();
+      const W = Math.max(240, box.clientWidth), H = box.clientHeight || 170;
+      const left = 34, right = 4, top = 8, bottom = 22;
+      const iw = W - left - right, ih = H - top - bottom;
+      const values = series.map((d) => d[key] || 0);
+      const max = niceMax(Math.max(...values));
+      const band = iw / series.length;
+      const bw = Math.min(24, Math.max(2, band - 2));            // 2px of surface between neighbours
+      const y = (v) => top + ih - (v / max) * ih;
+      const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${def.title}, last ${series.length} days. Use the Table view for every value.` });
+
+      for (const t of [0, max / 2, max]) {                       // hairline grid, labels in muted ink
+        const gy = Math.round(y(t)) + 0.5;
+        root.append(svg('line', { x1: left, x2: W - right, y1: gy, y2: gy, stroke: t === 0 ? '#3a3a42' : '#26262c', 'stroke-width': 1 }));
+        const lab = svg('text', { x: left - 8, y: gy + 4, 'text-anchor': 'end', fill: '#8b93a1', 'font-size': 11 });
+        lab.textContent = n(Math.round(t));
+        root.append(lab);
+      }
+      const xl = (i, text, anchor) => {
+        const t = svg('text', { x: left + band * i + band / 2, y: H - 6, 'text-anchor': anchor, fill: '#8b93a1', 'font-size': 11 });
+        t.textContent = text; root.append(t);
+      };
+      xl(0, shortDay(series[0].day), 'start');
+      xl(series.length - 1, 'Today', 'end');
+
+      const bars = [];
+      series.forEach((d, i) => {
+        const v = values[i];
+        const x = left + band * i + (band - bw) / 2;
+        const top_ = y(v), hgt = top + ih - top_;
+        if (v > 0) {
+          const r = Math.min(4, bw / 2, hgt);                      // rounded data end, square at the baseline
+          const path = `M${x},${top + ih} V${top_ + r} Q${x},${top_} ${x + r},${top_} H${x + bw - r} Q${x + bw},${top_} ${x + bw},${top_ + r} V${top + ih} Z`;
+          const bar = svg('path', { d: path, fill: '#3987e5' });
+          bars[i] = bar; root.append(bar);
+        }
+      });
+      // Hit targets: the whole day's column, not just the bar, so small values are easy to hover.
+      const tip = h('div', { class: 'tip hidden', role: 'status' });
+      series.forEach((d, i) => {
+        const hit = svg('rect', { x: left + band * i, y: top, width: band, height: ih, fill: 'transparent' });
+        const show = () => {
+          bars.forEach((b, j) => b && b.setAttribute('fill', j === i ? '#6da7ec' : '#3987e5'));
+          const v = values[i];
+          tip.replaceChildren(h('b', null, n(v)), ` ${v === 1 ? def.unit : def.unitPl}`, h('div', { class: 'muted' }, longDay(d.day)));
+          tip.style.left = `${Math.min(W - 60, Math.max(60, left + band * i + band / 2))}px`;
+          tip.style.top = `${y(v)}px`;
+          tip.classList.remove('hidden');
+        };
+        const hide = () => { tip.classList.add('hidden'); bars.forEach((b) => b && b.setAttribute('fill', '#3987e5')); };
+        hit.addEventListener('mouseenter', show);
+        hit.addEventListener('mouseleave', hide);
+        hit.addEventListener('touchstart', show, { passive: true });
+        root.append(hit);
+      });
+      box.append(root, tip);
+      if (!values.some(Boolean)) box.append(h('div', { class: 'empty' }, 'Nothing yet'));
+    }
+
+    function renderCharts() {
+      const wrap = $('charts');
+      wrap.replaceChildren(...CHARTS.map((def) => {
+        const total = stats.series.reduce((a, d) => a + (d[def.key] || 0), 0);
+        const today = stats.series[stats.series.length - 1][def.key] || 0;
+        const meta = def.key === 'active'
+          ? `${n(today)} today · ${n(stats.active_month)} different accounts in 30 days`
+          : `${n(today)} today · ${n(total)} in 30 days`;
+        const card = h('div', { class: 'card' }, h('h3', null, def.title), h('div', { class: 'meta' }, meta), h('div', { class: 'chart', 'data-key': def.key }));
+        return card;
+      }));
+      requestAnimationFrame(() => {
+        wrap.querySelectorAll('.chart').forEach((box) => columnChart(box, stats.series, box.dataset.key, CHARTS.find((c) => c.key === box.dataset.key)));
+      });
+    }
+
+    function renderSeriesTable() {
+      const rows = [...stats.series].reverse().map((d) => h('tr', null,
+        h('td', null, longDay(d.day)), h('td', { class: 'n' }, n(d.visitors)), h('td', { class: 'n' }, n(d.views)),
+        h('td', { class: 'n' }, n(d.app_visitors)), h('td', { class: 'n' }, n(d.active)), h('td', { class: 'n' }, n(d.signups))));
+      $('series-table').replaceChildren(h('table', null,
+        h('thead', null, h('tr', null, h('th', null, 'Day'), h('th', { class: 'n' }, 'Homepage visitors'), h('th', { class: 'n' }, 'Page views'),
+          h('th', { class: 'n' }, 'Opened the app'), h('th', { class: 'n' }, 'Active accounts'), h('th', { class: 'n' }, 'Sign-ups'))),
+        h('tbody', null, rows)));
+    }
+
+    document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+      document.querySelectorAll('[data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      const table = b.dataset.view === 'table';
+      $('charts').classList.toggle('hidden', table);
+      $('series-table').classList.toggle('hidden', !table);
+      if (!table && stats) renderCharts();
+    }));
+
+    let resizeT = 0;
+    addEventListener('resize', () => {
+      clearTimeout(resizeT);
+      resizeT = setTimeout(() => { if (stats && !$('charts').classList.contains('hidden')) renderCharts(); }, 150);
+    });
+
+    async function loadSideLists() {
+      try {
+        const [acc, fb] = await Promise.all([api('accounts'), api('feedback')]);
+        const newest = [...acc.accounts].sort((a, b) => (b.created_at > a.created_at ? 1 : -1)).slice(0, 5);
+        $('newest').replaceChildren(...(newest.length ? newest.map((a) => h('li', null,
+          h('span', { class: 'main' }, a.email), h('span', { class: 'side' }, 'joined ' + ago(a.created_at)))) : [h('li', { class: 'muted' }, 'No accounts yet.')]));
+        const latest = fb.items.slice(0, 4);
+        $('latest-fb').replaceChildren(...(latest.length ? latest.map((f) => h('li', null,
+          h('span', { class: 'main' }, `${f.kind_label}: ${f.message}`), h('span', { class: 'side' }, ago(f.created_at)))) : [h('li', { class: 'muted' }, 'No feedback yet.')]));
+      } catch { /* the tiles above still show */ }
+    }
+
+    // ---------------------------------------------------------------- accounts
+    let acctT = 0;
+    $('acct-q').addEventListener('input', () => { clearTimeout(acctT); acctT = setTimeout(loadAccounts, 250); });
+
+    async function loadAccounts() {
+      let data;
+      try { data = await api('accounts?q=' + encodeURIComponent($('acct-q').value.trim())); }
+      catch (err) { if (err.message !== 'signed out') $('acct-table').replaceChildren(h('p', { class: 'err', style: 'padding:14px' }, err.message)); return; }
+      $('acct-count').textContent = `${n(data.total)} account${data.total === 1 ? '' : 's'}` + (data.total > data.accounts.length ? ` (showing ${data.accounts.length})` : '');
+      if (!data.accounts.length) {
+        $('acct-table').replaceChildren(h('div', { class: 'empty-state' }, $('acct-q').value ? 'No account matches that.' : 'No accounts yet.'));
+        return;
+      }
+      $('acct-table').replaceChildren(h('table', null,
+        h('thead', null, h('tr', null, h('th', null, 'Account'), h('th', null, 'Joined'), h('th', null, 'Last active'),
+          h('th', { class: 'n' }, 'People set up'), h('th', { class: 'n' }, 'Days active (30 d)'))),
+        h('tbody', null, data.accounts.map((a) => h('tr', null,
+          h('td', null, a.online ? h('span', { class: 'dot', title: 'Online now' }) : null, a.email, a.online ? h('span', { class: 'muted small' }, ' · online') : null),
+          h('td', null, joined(a.created_at)),
+          h('td', null, ago(a.last_active)),
+          h('td', { class: 'n' }, n(a.people)),
+          h('td', { class: 'n' }, n(a.days_active)))))));
+    }
+
+    // ---------------------------------------------------------------- feedback
+    let fbStatus = 'new';
+    document.querySelectorAll('#fb-filter button').forEach((b) => b.addEventListener('click', () => {
+      fbStatus = b.dataset.status;
+      document.querySelectorAll('#fb-filter button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      loadFeedback();
+    }));
+
+    const LABELS = { new: 'New', read: 'Read', done: 'Done' };
+    async function loadFeedback() {
+      let data;
+      try { data = await api('feedback' + (fbStatus ? '?status=' + fbStatus : '')); }
+      catch (err) { if (err.message !== 'signed out') $('fb-list').replaceChildren(h('p', { class: 'err' }, err.message)); return; }
+      document.querySelectorAll('#fb-filter button').forEach((b) => {
+        const s = b.dataset.status;
+        const total = Object.values(data.counts).reduce((a, c) => a + c, 0);
+        b.textContent = `${s ? LABELS[s] : 'All'} (${n(s ? data.counts[s] : total)})`;
+      });
+      $('fb-rating').textContent = data.rating.count ? `Average rating ${data.rating.average} / 5 from ${n(data.rating.count)}` : '';
+      const badge = $('fb-badge');
+      badge.textContent = data.counts.new; badge.classList.toggle('hidden', !data.counts.new);
+      if (!data.items.length) {
+        $('fb-list').replaceChildren(h('div', { class: 'empty-state' }, fbStatus === 'new' ? 'You’re all caught up: no new feedback.' : 'Nothing here.'));
+        return;
+      }
+      $('fb-list').replaceChildren(...data.items.map(feedbackCard));
+    }
+
+    function feedbackCard(f) {
+      const stars = f.rating ? h('span', { class: 'stars', 'aria-label': `${f.rating} out of 5` }, '★'.repeat(f.rating) + '☆'.repeat(5 - f.rating)) : null;
+      const actions = h('div', { class: 'fb-actions' });
+      const from = f.email
+        ? h('span', { class: 'from' }, 'From ', h('a', { href: `mailto:${f.email}?subject=${encodeURIComponent('About your imy feedback')}` }, f.email))
+        : h('span', { class: 'from' }, 'Didn’t ask for a reply');
+      actions.append(from);
+      if (f.email) actions.append(h('a', { class: 'btn', href: `mailto:${f.email}?subject=${encodeURIComponent('About your imy feedback')}` }, 'Reply by email'));
+      const move = (status, label) => h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try { await api('feedback/' + f.id, { method: 'PUT', body: { status } }); await loadFeedback(); refresh(); }
+        catch (err) { e.currentTarget.disabled = false; actions.append(h('span', { class: 'err small' }, err.message)); }
+      } }, label);
+      if (f.status !== 'read') actions.append(move('read', f.status === 'new' ? 'Mark read' : 'Move to read'));
+      if (f.status !== 'done') actions.append(move('done', 'Mark done'));
+      if (f.status !== 'new') actions.append(move('new', 'Mark new'));
+      const del = h('button', { class: 'btn danger', type: 'button', onclick: () => {
+        // Ask on the card itself rather than with a pop-up.
+        const box = h('span', { class: 'confirm' }, 'Delete for good?',
+          h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+            try { await api('feedback/' + f.id, { method: 'DELETE' }); await loadFeedback(); refresh(); }
+            catch (err) { box.replaceWith(h('span', { class: 'err small' }, err.message)); }
+          } }, 'Delete'),
+          h('button', { class: 'btn', type: 'button', onclick: () => box.replaceWith(del) }, 'Keep'));
+        del.replaceWith(box);
+      } }, 'Delete');
+      actions.append(del);
+      return h('article', { class: 'fb-item' + (f.status === 'new' ? ' new' : '') },
+        h('div', { class: 'fb-top' }, h('span', { class: 'pill' }, f.kind_label), stars,
+          h('span', null, ago(f.created_at)), f.page ? h('span', null, 'from ' + f.page) : null,
+          f.status !== 'new' ? h('span', null, '· ' + LABELS[f.status]) : null),
+        h('p', { class: 'fb-msg' }, f.message),
+        actions);
+    }
+
+    // ---------------------------------------------------------------- keep it fresh
+    let poll = 0;
+    function startPolling() {
+      stopPolling();
+      poll = setInterval(() => { if (!document.hidden) refresh(); }, 60000);
+    }
+    function stopPolling() { clearInterval(poll); poll = 0; }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && poll) refresh(); });
+
+    // A sign-in link pasted into a tab that already has this page open changes only the #part.
+    addEventListener('hashchange', () => { if (/^#login=/.test(location.hash)) start(); });
+    start();
+  })();
+  </script>
+</body>
+</html>

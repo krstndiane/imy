@@ -646,3 +646,33 @@ code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size:
 .linky.small:hover { text-decoration: underline; }
 .auth-card .sent .small { margin: 10px 0 0; }
 .auth-card a.linky { text-decoration: none; }
+
+/* ---- "Send feedback" (Feedback.jsx) ---- */
+.feedback-open { color: var(--side-muted); text-align: center; }
+.sidebar .feedback-open:hover:not(:disabled) { color: var(--side-ink); }
+.modal-back { position: fixed; inset: 0; z-index: 50; background: rgba(5, 5, 8, .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.modal { width: min(460px, 100%); background: var(--solid); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 22px 22px 18px; font-family: var(--body); }
+.modal h2 { margin: 0 0 6px; font-family: var(--display); font-size: 1.25rem; letter-spacing: -.01em; }
+.modal .actions { margin-top: 16px; }
+.fb-label { margin: 16px 0 8px; font-weight: 600; }
+.fb-kinds { display: flex; flex-wrap: wrap; gap: 8px; }
+.fb-chip { border: 1px solid var(--line); background: var(--soft); border-radius: 999px; padding: 7px 12px; cursor: pointer; font-size: .86rem; }
+.fb-chip.on { border-color: var(--accent); background: var(--accent-wash); font-weight: 600; }
+.fb-faces { display: flex; gap: 6px; }
+.fb-face { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--soft); font-size: 1.35rem; cursor: pointer;
+  filter: grayscale(.6); opacity: .75; transition: transform .15s, opacity .15s, filter .15s; }
+.fb-face:hover, .fb-face.on { filter: none; opacity: 1; }
+.fb-face.on { border-color: var(--accent); background: var(--accent-wash); transform: translateY(-1px); }
+.fb-chip:focus-visible, .fb-face:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.modal .field { margin: 0; }
+.modal .field .fb-label { margin-top: 16px; margin-bottom: 4px; }
+.fb-count { align-self: flex-end; }
+.modal .check { margin-top: 12px; }
+.fb-thanks { text-align: center; padding: 8px 0 2px; }
+.fb-thanks .actions { justify-content: center; }
+.fb-big { font-size: 2.4rem; margin: 0 0 6px; }
+@media (max-width: 760px) { .sidebar .feedback-open { width: auto; flex: none; } }
+@media (prefers-reduced-motion: reduce) { .fb-face { transition: none; } }
+.modal .fb-count { font-size: .75rem; color: var(--muted); }

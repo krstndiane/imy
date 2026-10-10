@@ -1,6 +1,10 @@
 """db.py - SQLite storage.
 
-Nine tables (ai_usage counts AI use per account per day - see usage.py):
+Nine tables for the app itself (ai_usage counts AI use per account per day - see usage.py), and
+a few more for the admin page (see insights.py and feedback.py): admin_links / admin_sessions (how
+the site's owner signs in), active_days (which accounts used imy on which day), visit_days /
+visit_seen / visit_salt (cookieless visitor counts) and feedback (what people sent from the app).
+
   users         one row per account; `sessions` is how a browser stays signed in (see auth.py)
   sessions      live sign-ins, as hashes of the cookie token
   password_resets  "forgot password" links that were emailed, as hashes; each works once, for 30 minutes
@@ -106,6 +110,55 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   other INTEGER NOT NULL DEFAULT 0,     -- background work like memory notes
   PRIMARY KEY (day, user_id)
 );
+-- ---- for the admin page (insights.py, feedback.py). Nothing here holds anyone's chats.
+CREATE TABLE IF NOT EXISTS admin_links (
+  token_hash TEXT PRIMARY KEY,          -- emailed sign-in links for the site's owner, as hashes
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS active_days (
+  day TEXT NOT NULL,                    -- local date: this account used imy that day
+  user_id INTEGER NOT NULL,
+  PRIMARY KEY (day, user_id)
+);
+CREATE TABLE IF NOT EXISTS visit_days (
+  day TEXT NOT NULL,
+  page TEXT NOT NULL,                   -- landing | app
+  views INTEGER NOT NULL DEFAULT 0,
+  visitors INTEGER NOT NULL DEFAULT 0,  -- different visitors that day (see insights.py: no cookies)
+  PRIMARY KEY (day, page)
+);
+CREATE TABLE IF NOT EXISTS visit_seen (
+  day TEXT NOT NULL,
+  page TEXT NOT NULL,
+  vhash TEXT NOT NULL,                  -- a code that changes every day; deleted the next day
+  PRIMARY KEY (day, page, vhash)
+);
+CREATE TABLE IF NOT EXISTS visit_salt (
+  day TEXT PRIMARY KEY,
+  salt TEXT NOT NULL                    -- thrown away the next day, so old codes can't be traced back
+);
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'other',   -- idea | problem | love | other
+  rating INTEGER,                       -- 1-5, optional
+  message TEXT NOT NULL,
+  page TEXT NOT NULL DEFAULT '',        -- which screen they were on
+  can_reply INTEGER NOT NULL DEFAULT 0, -- they said it's fine to email them about it
+  status TEXT NOT NULL DEFAULT 'new',   -- new | read | done
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, id);
+CREATE INDEX IF NOT EXISTS idx_active_user ON active_days(user_id, day);
 CREATE INDEX IF NOT EXISTS idx_messages_person ON messages(person_id, screenshot_id, position);
 CREATE INDEX IF NOT EXISTS idx_chat_person ON chat_messages(person_id, id);
 CREATE INDEX IF NOT EXISTS idx_media_person ON media(person_id, id);
@@ -145,6 +198,8 @@ MIGRATIONS = [
     # When the account confirmed these are conversations they were part of and won't be used to
     # pretend to be this person to anyone else (asked when a person is added).
     ("persons", "consent_at", "TEXT"),
+    # The last time this account did anything (updated at most once a minute; see insights.saw).
+    ("users", "last_active", "TEXT"),
 ]
 
 

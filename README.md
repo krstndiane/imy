@@ -287,6 +287,27 @@ Built to stay up: short database locks (uploads and chats never block each other
 a failed reply falls back to a simpler one, every error comes back as a friendly message, a broken screen shows "Try again"
 instead of a blank page, and the website reconnects by itself if the server restarts. There's a per-visitor speed limit too.
 
+### Free hosting: Oracle Cloud "Always Free"
+
+A permanent free server with a real disk (2 processors, 12 GB memory as of mid-2026). `deploy/` has everything:
+Caddy in front for https (free certificate, renewed by itself), imy behind it, data on a Docker volume.
+
+1. **Make the server** (oracle.com/cloud/free): Compute → Instances → Create. Image **Ubuntu 24.04**, shape
+   **Ampere A1 Flex** (1–2 OCPU, 6–12 GB). Download the **private key**. Note the **public IP**.
+2. **Open the doors:** the instance's subnet → Security List → add Ingress rules for TCP **80** and **443**
+   from `0.0.0.0/0`.
+3. **Free address:** at duckdns.org, make a subdomain (e.g. `imy-pdyn`) and set its IP to the server's.
+4. **From the imy folder on your Mac:**
+   ```bash
+   bash deploy/push-to-server.sh ubuntu@SERVER_IP ~/Downloads/ssh-key.key
+   ```
+   The first time, it asks for the address, the Gmail App Password and the Groq key (kept only on the server),
+   installs Docker, starts everything and runs the launch checks. **Run the same command to update the site.**
+   It never sends `.env`, `data/` or `.venv`, and an update never touches the server's database.
+
+Oracle may stop free servers it considers idle; upgrading the account to Pay As You Go (still free within the
+Always Free limits) is the usual way to avoid that.
+
 ### Going live
 
 **1. Settings on the host** (from `.env.example`; never upload `.env` itself):
@@ -351,6 +372,11 @@ the newest one opens, free disk, test-looking accounts, the daily AI limit, Gemi
   Keep that to you; use two-factor sign-in on the host, GitHub and Groq.
 - **Deletion requests by email:** `python -m backend.admin remove their@email` shows what would go,
   add `--yes` to delete it (the same as "Delete everything" in the app). Make a backup first.
+- **The admin page:** open `/admin` (e.g. http://localhost:8000/admin) and type an admin email
+  (`IMY_ADMIN_EMAILS`, or `IMY_CONTACT_EMAIL` if that's not set). imy emails a one-time sign-in link; on
+  your own computer it's also printed in the Terminal. The page shows who's using imy right now, active
+  accounts, sign-ups and homepage visitors for the last 30 days, every account (counts only, never chats)
+  and the feedback inbox. Clients send feedback with "Send feedback" in the app's sidebar.
 - **Accounts and usage:** `python -m backend.admin accounts`, `python -m backend.admin usage`.
 - **A key leaked:** make a new key, set it on the host, restart imy, delete the old key. Nothing else needs to change.
 - **After changing the Terms:** bump `TERMS_VERSION` in `backend/auth.py` so new sign-ups record the new version.

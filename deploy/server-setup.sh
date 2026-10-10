@@ -52,6 +52,8 @@ if [ ! -f .env ]; then
 IMY_DOMAIN=$domain
 IMY_PUBLIC_URL=https://$domain
 IMY_CONTACT_EMAIL=pdyntechnology@gmail.com
+# Who can open /admin (its sign-in link is emailed to this inbox).
+IMY_ADMIN_EMAILS=pdyntechnology@gmail.com
 
 IMY_SMTP_HOST=smtp.gmail.com
 IMY_SMTP_PORT=587

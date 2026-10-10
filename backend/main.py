@@ -31,7 +31,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from . import auth, backup, claude, engine, importers, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
+from . import auth, backup, claude, engine, importers, insights, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
+from . import feedback as feedback_mod
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +48,8 @@ async def lifespan(_app):
     init_db()
     auth.sweep_sessions()                    # drop sign-ins that ran out while imy was off
     auth.start_sweeper()                     # and keep doing it while it runs
+    insights.sweep()                         # yesterday's visit codes, old admin links (see insights.py)
+    insights.start_sweeper()
     backup.start_daily()                     # only does anything with IMY_BACKUP_DAILY=1
     usage.prune()                            # daily AI counts older than ~a month aren't needed
     engine.VectorSpace.warm_up()             # load the matcher in the background: the first reply isn't slow
@@ -65,11 +68,17 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # needs an account - that's what keeps one person's chats out of another person's browser.
 PUBLIC_PATHS = {"/api/health", "/api/status", "/api/auth/me",
                 "/api/auth/signup", "/api/auth/signin", "/api/auth/signout",
-                "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/check"}
+                "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/check", "/api/visit"}
+# The admin page has its own door (insights.py): an emailed link, its own cookie, and only these
+# can be reached without it.
+ADMIN_PUBLIC = {"/api/admin/link", "/api/admin/login", "/api/admin/me", "/api/admin/logout"}
 
 
 async def identify(request: Request, call_next):
     """Work out who is asking (from the sign-in cookie) before the request reaches anything else."""
+    path = request.url.path
+    if path.startswith("/api/admin/"):
+        return await _identify_admin(request, call_next, path)
     user = None
     try:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -77,15 +86,32 @@ async def identify(request: Request, call_next):
             user = auth.load_session(token)
     except Exception:
         print(f"[imy] couldn't read the sign-in cookie:\n{traceback.format_exc()}")
+    if user:
+        insights.saw(user["id"])              # "active today" for the admin page; at most one write a minute
     reset = auth.CURRENT.set(user)
     try:
-        path = request.url.path
         needs_account = (path.startswith("/api/") and path not in PUBLIC_PATHS) or path.startswith("/uploads/")
         if needs_account and not user:
             return JSONResponse({"detail": "Please sign in."}, status_code=401)
         return await call_next(request)
     finally:
         auth.CURRENT.reset(reset)
+
+
+async def _identify_admin(request: Request, call_next, path: str):
+    """Admin requests: the client sign-in cookie means nothing here, only the admin one does."""
+    admin = None
+    try:
+        admin = insights.load_admin(request.cookies.get(insights.ADMIN_COOKIE, ""))
+    except Exception:
+        print(f"[imy] couldn't read the admin cookie:\n{traceback.format_exc()}")
+    if not admin and path not in ADMIN_PUBLIC:
+        return JSONResponse({"detail": "Admin sign-in needed."}, status_code=401)
+    reset = insights.ADMIN.set(admin)
+    try:
+        return await call_next(request)
+    finally:
+        insights.ADMIN.reset(reset)
 
 
 # Added in this order so CORS ends up outermost (Starlette wraps each new one around the last).
@@ -105,7 +131,10 @@ async def unexpected_error(request: Request, exc: Exception):
 # A small per-visitor speed limit, so one person (or a bot) can't use up the free AI limit or the CPU.
 LIMITS = {"chat": (40, 60), "upload": (120, 60), "import": (20, 60),
           "auth": (12, 300),        # sign-in guesses: a dozen tries per 5 minutes, per visitor
-          "forgot": (5, 900)}       # "email me a reset link": 5 per 15 minutes, per visitor
+          "forgot": (5, 900),       # "email me a reset link": 5 per 15 minutes, per visitor
+          "admin": (5, 900),        # "email me an admin link"
+          "feedback": (6, 3600),    # feedback notes: 6 an hour is plenty for a person, too few for spam
+          "visit": (120, 60)}       # page-view counting
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
 _hits_lock = threading.Lock()
 _swept_at = 0.0
@@ -258,7 +287,7 @@ def who_am_i():
 
 def wipe_account(user_id: int) -> list[int]:
     """Remove an account and everything under it: people, messages, chats, photos, screenshots,
-    sign-ins, reset links, usage counts, and every uploaded file. Used by "Delete everything" and by
+    sign-ins, reset links, usage counts, feedback, activity days, and every uploaded file. Used by "Delete everything" and by
     `python -m backend.admin remove`. Returns the ids of the people removed."""
     with db() as conn:
         pids = [r["id"] for r in conn.execute("SELECT id FROM persons WHERE user_id = ?", (user_id,))]
@@ -276,6 +305,8 @@ def wipe_account(user_id: int) -> list[int]:
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM ai_usage WHERE user_id = ?", (user_id,))
+        feedback_mod.forget_user(conn, user_id)
+        insights.forget_user(conn, user_id)
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     for p in paths:
         (UPLOAD_DIR / p).unlink(missing_ok=True)
@@ -1507,6 +1538,145 @@ def get_style(pid: int):
             "ai": llm.status()}
 
 
+# ---------------------------------------------------------------- feedback from clients, and visit counts
+class FeedbackIn(BaseModel):
+    kind: str = "other"         # idea | problem | love | other
+    message: str = ""
+    rating: int | None = None   # 1-5, optional
+    can_reply: bool = False     # "you can email me about this"
+    page: str = ""              # which screen they sent it from
+
+
+@app.post("/api/feedback")
+def send_feedback(body: FeedbackIn, request: Request = None):
+    rate_limit(request, "feedback")
+    me = auth.current()
+    try:
+        out = feedback_mod.add(me["id"], body.kind, body.message, body.rating, body.can_reply, body.page)
+    except feedback_mod.FeedbackError as exc:
+        raise HTTPException(400, str(exc))
+    # Let the admins know (IMY_FEEDBACK_EMAILS=0 turns this off). Only when email really works:
+    # a notice that can't be sent shouldn't fill the server log.
+    if mailer.configured() and os.environ.get("IMY_FEEDBACK_EMAILS", "1") != "0":
+        site = mailer.site_url(request)
+        mail = mailer.feedback_email(feedback_mod.KINDS[out["kind"]], body.message.strip(), body.rating,
+                                     me["email"] if body.can_reply else None, site)
+        for admin in insights.admin_emails():
+            mailer.send_later(admin, *mail)
+    return {"ok": True, **out}
+
+
+class VisitIn(BaseModel):
+    page: str = ""              # landing | app
+
+
+@app.post("/api/visit")
+def count_visit(body: VisitIn, request: Request = None):
+    """One page view, counted without cookies (see insights.py). Always answers ok: whether it was
+    counted (bots and Do Not Track aren't) is nobody's business but the admin page's."""
+    rate_limit(request, "visit")
+    if request is not None:
+        insights.count_visit(body.page, visitor(request), request.headers.get("user-agent", ""), request.headers)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- the admin page (/admin)
+# Its own door, separate from clients: an emailed one-time link (no password), its own cookie that
+# only ever goes to /api/admin/..., and nothing here can read anyone's chats. See insights.py.
+class AdminLinkIn(BaseModel):
+    email: str = ""
+
+
+class AdminLoginIn(BaseModel):
+    token: str = ""
+
+
+class FeedbackStatusIn(BaseModel):
+    status: str = ""
+
+
+@app.get("/api/admin/me")
+def admin_me():
+    return {"admin": insights.ADMIN.get(), "email_works": mailer.configured()}
+
+
+@app.post("/api/admin/link")
+def admin_link(body: AdminLinkIn, request: Request = None):
+    """Email a sign-in link if this is an admin address. Same answer either way."""
+    rate_limit(request, "admin")
+    email = (body.email or "").strip().lower()
+    if not auth.EMAIL_RE.match(email) or len(email) > 254:
+        raise HTTPException(400, "That doesn't look like an email address.")
+    site = mailer.site_url(request)
+    local = mailer.is_local(site)
+    if not site or not (mailer.configured() or local):
+        raise HTTPException(503, "imy can't send email yet, so the admin link can't be sent. Set IMY_SMTP_HOST and "
+                                 "IMY_PUBLIC_URL (see backend/mailer.py).")
+    token = insights.start_admin_link(email)
+    if token:
+        link = f"{site}/admin#login={token}"
+        mailer.send_later(email, *mailer.admin_link_email(link, insights.LINK_MINUTES), print_if_off=local)
+        if local and mailer.configured():
+            # Your own computer: also print it, so a mistyped App Password doesn't lock you out of testing.
+            print(f"[imy] admin sign-in link (shown because this is your own computer): {link}", flush=True)
+    return {"ok": True, "minutes": insights.LINK_MINUTES, "printed": local}
+
+
+@app.post("/api/admin/login")
+def admin_login(body: AdminLoginIn, request: Request = None):
+    rate_limit(request, "auth")
+    got = insights.use_admin_link(body.token)
+    if not got:
+        raise HTTPException(400, "This link has expired or was already used. Ask for a new one.")
+    email, session = got
+    resp = JSONResponse({"admin": {"email": email}})
+    # samesite=strict: the cookie is never sent when another website links or posts here.
+    resp.set_cookie(insights.ADMIN_COOKIE, session, max_age=insights.SESSION_HOURS * 3600, httponly=True,
+                    samesite="strict", secure=auth.secure_cookies(request), path=insights.ADMIN_COOKIE_PATH)
+    return resp
+
+
+@app.post("/api/admin/logout")
+def admin_logout(request: Request = None):
+    if request:
+        insights.end_admin(request.cookies.get(insights.ADMIN_COOKIE, ""))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(insights.ADMIN_COOKIE, path=insights.ADMIN_COOKIE_PATH)
+    return resp
+
+
+@app.get("/api/admin/stats")
+def admin_stats(days: int = 30):
+    return insights.stats(max(7, min(days, 365)))
+
+
+@app.get("/api/admin/accounts")
+def admin_accounts(q: str = ""):
+    return insights.accounts(q[:100])
+
+
+@app.get("/api/admin/feedback")
+def admin_feedback(status: str = ""):
+    return feedback_mod.listing(status)
+
+
+@app.put("/api/admin/feedback/{fid}")
+def admin_feedback_status(fid: int, body: FeedbackStatusIn):
+    try:
+        if not feedback_mod.set_status(fid, body.status):
+            raise HTTPException(404, "That feedback isn't there any more.")
+    except feedback_mod.FeedbackError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
+
+
+@app.delete("/api/admin/feedback/{fid}")
+def admin_feedback_delete(fid: int):
+    if not feedback_mod.delete(fid):
+        raise HTTPException(404, "That feedback isn't there any more.")
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- privacy + terms pages
 # Both are plain HTML files in frontend/public (copied to dist when the site is built). They say
 # {{CONTACT_EMAIL}} wherever your contact address goes, and it's filled in here from IMY_CONTACT_EMAIL,
@@ -1552,6 +1722,8 @@ if FRONTEND_DIST.exists():
             raise HTTPException(404, "Not found")
         if path == "app" or path.startswith("app/"):
             return FileResponse(FRONTEND_DIST / "index.html")
+        if path in ("admin", "admin/") and (FRONTEND_DIST / "admin.html").is_file():
+            return FileResponse(FRONTEND_DIST / "admin.html")
         target = (FRONTEND_DIST / path).resolve()
         inside = target == _DIST or _DIST in target.parents     # never serve files outside frontend/dist
         if path and inside and target.is_file():

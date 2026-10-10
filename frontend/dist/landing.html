@@ -456,6 +456,10 @@
     const toReset = () => { if (location.hash.startsWith('#reset=')) location.replace('/app' + location.hash); };
     toReset(); addEventListener('hashchange', toReset);
 
+    // Count this visit for the admin page: no cookies, nothing stored in your browser (see /privacy.html).
+    fetch('/api/visit', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ page: 'landing' }), keepalive: true }).catch(() => {});
+
     // ---- platform switcher: swap the mockup's skin + a few words ----
     const PLATFORMS = {
       messenger: { status: 'Active 1h ago', stamp: 'SEP 26, 2026' },
