@@ -1,0 +1,11 @@
+# https for imy. {$IMY_DOMAIN} comes from .env (see docker-compose.yml).
+{$IMY_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy imy:8000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

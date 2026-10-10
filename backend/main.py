@@ -323,7 +323,7 @@ def set_password(body: PasswordIn, request: Request = None):
 
 # ---------------------------------------------------------------- forgot password
 # 1. The sign-in page sends an email address to /forgot. If there's an account, imy emails it a link:
-#       https://your-site/#reset=<token>
+#       https://your-site/app#reset=<token>
 #    The token comes after "#", so browsers never send it to the server: it stays out of server
 #    and host logs, and out of the "Referer" other sites would see.
 # 2. Opening the link shows "Choose a new password" (the page asks /reset/check first, so an old
@@ -367,7 +367,7 @@ def forgot_password(body: ForgotIn, request: Request = None):
     found = auth.start_reset(email)
     if found:
         user, token = found
-        link = f"{site}/#reset={token}"
+        link = f"{site}/app#reset={token}"
         mailer.send_later(user["email"], *mailer.reset_email(link, auth.RESET_MINUTES, user["email"]), print_if_off=local)
     # "printed": email is off and this is your own computer, so the link went to the Terminal.
     return {"ok": True, "minutes": auth.RESET_MINUTES, "printed": not mailer.configured()}
@@ -1546,8 +1546,15 @@ if FRONTEND_DIST.exists():
 
     @app.get("/{path:path}")
     def spa(path: str):
+        """The landing page at the main address; the app itself at /app (its screens all live in the one
+        page, so /app/anything is the app too); and the files the pages use (/media/..., /privacy.html...)."""
         if path.startswith("api/"):
             raise HTTPException(404, "Not found")
+        if path == "app" or path.startswith("app/"):
+            return FileResponse(FRONTEND_DIST / "index.html")
         target = (FRONTEND_DIST / path).resolve()
         inside = target == _DIST or _DIST in target.parents     # never serve files outside frontend/dist
-        return FileResponse(target if path and inside and target.is_file() else FRONTEND_DIST / "index.html")
+        if path and inside and target.is_file():
+            return FileResponse(target)
+        landing = FRONTEND_DIST / "landing.html"
+        return FileResponse(landing if landing.is_file() else FRONTEND_DIST / "index.html")

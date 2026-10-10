@@ -228,7 +228,9 @@ def _footer(site: str) -> str:
 
 
 def _site_of(link: str) -> str:
-    return link.split("/#", 1)[0].rstrip("/") if "/#" in link else ""
+    """https://imy.ph/app#reset=... -> https://imy.ph"""
+    base = link.split("#", 1)[0].rstrip("/")
+    return base[:-len("/app")] if base.endswith("/app") else base
 
 
 def reset_email(link: str, minutes: int, email: str = "") -> tuple[str, str, str]:
@@ -279,7 +281,7 @@ def changed_email(site: str, email: str = "") -> tuple[str, str, str]:
                + _p("Wasn’t you?", size=15, color=INK, margin="0 0 6px")
                + _p(f"Choose a new password straight away with “Forgot password?”, then {html.escape(help_line)}.",
                     size=14, margin="0 0 14px")
-               + (_button(html.escape(site, quote=True) + "/", "Go to sign-in", solid=False, margin="0 0 14px")
+               + (_button(html.escape(site, quote=True) + "/app", "Go to sign-in", solid=False, margin="0 0 14px")
                   if site else "")
                + '</td></tr></table>'))
     return subject, text, _page("Your password was changed",

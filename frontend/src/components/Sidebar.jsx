@@ -1,6 +1,7 @@
 import ThemeSwitch from "./ThemeSwitch";
 import Avatar, { initials } from "./Avatar";
 import Account from "./Account";
+import PdynMark from "./PdynMark";
 
 export { initials };   // other screens still import it from here
 
@@ -34,6 +35,7 @@ export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onT
       <span className="grow" />
       <ThemeSwitch theme={theme} onChange={onTheme} />
       <Account user={user} onSignedOut={onSignedOut} />
+      <div className="pdyn-side"><PdynMark height={22} /></div>
     </aside>
   );
 }

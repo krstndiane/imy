@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import PdynMark from "./PdynMark";
 import { api } from "../api";
 
 /* "Choose a new password" - what the link in a "forgot password" email opens.
 
-   The link looks like  https://imy.site/#reset=<token>. App.jsx reads the token and shows this
+   The link looks like  https://imy.site/app#reset=<token>. App.jsx reads the token and shows this
    page instead of everything else. It asks the server first whether the link still works, so an
    old or used link says so straight away, before anyone types a new password into it.
 
@@ -92,9 +93,10 @@ export default function ResetPassword({ token, onSignedIn, onNewLink }) {
         )}
 
         <p className="small muted swap">
-          <a href="/" className="linky">Back to sign in</a>
+          <a href="/app" className="linky">Back to sign in</a>
         </p>
       </div>
+      <PdynMark height={26} />
     </div>
   );
 }

@@ -1,0 +1,46 @@
+# imy on one server: imy itself, plus Caddy in front of it for https.
+# Caddy gets and renews a free certificate (Let's Encrypt) for IMY_DOMAIN by itself, sends http://
+# visitors to https://, and is the only thing reachable from the internet - imy's own port isn't.
+#
+# Run from the imy folder on the server (deploy/server-setup.sh does this for you):
+#   sudo docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+name: imy
+services:
+  imy:
+    build:
+      context: ..
+    env_file: ../.env
+    environment:
+      IMY_PROXY_HOPS: "1"          # Caddy is the one proxy in front: trust only the address it adds
+    volumes:
+      - imy-data:/data             # the database, uploads and backups; survives rebuilds and restarts
+    expose:
+      - "8000"                     # reachable by Caddy only, never from the internet
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }   # logs can't fill the disk
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      IMY_DOMAIN: ${IMY_DOMAIN:?Set IMY_DOMAIN in .env, e.g. IMY_DOMAIN=imy-pdyn.duckdns.org}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data           # the certificate; kept so it isn't requested again on every restart
+      - caddy-config:/config
+    depends_on:
+      - imy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  imy-data:
+  caddy-data:
+  caddy-config:

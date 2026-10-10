@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PdynMark from "./PdynMark";
 import { api } from "../api";
 
 /* The first screen when nobody is signed in.
@@ -152,9 +153,11 @@ export default function Auth({ onSignedIn, startMode = "in", startEmail = "" }) 
 
       <p className="fine auth-fine">
         imy copies writing patterns from the messages you give it. Replies are written by AI. It isn't them.{" "}
+        <a href="/">Home</a>{" · "}
         <a href="/privacy.html" target="_blank" rel="noreferrer">What imy stores</a>{" · "}
         <a href="/terms.html" target="_blank" rel="noreferrer">Terms</a>
       </p>
+      <PdynMark height={26} />
     </div>
   );
 }

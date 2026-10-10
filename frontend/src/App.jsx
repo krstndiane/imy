@@ -8,7 +8,9 @@ import Auth from "./components/Auth";
 import ResetPassword from "./components/ResetPassword";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-// A "forgot password" email links to  /#reset=<token>.  The part after # never reaches the server.
+// A "forgot password" email links to  /app#reset=<token>.  The part after # never reaches the server.
+// The landing page's "Start Chatting" opens  /app?signup=1, which starts on "Make an account".
+const startsOnSignUp = () => new URLSearchParams(window.location.search).has("signup");
 const resetTokenInUrl = () => (window.location.hash.match(/^#reset=([A-Za-z0-9_-]{20,})$/) || [])[1] || null;
 const clearUrlHash = () => window.history.replaceState(null, "", window.location.pathname + window.location.search);
 
@@ -103,7 +105,7 @@ export default function App() {
   if (user === undefined) return <div className="app booting" aria-busy="true" />;
   if (!user) {
     return <Auth key={authStart ? "forgot" : "start"} onSignedIn={(u) => { setAuthStart(null); setUser(u); }}
-      startMode={authStart?.mode} startEmail={authStart?.email} />;
+      startMode={authStart?.mode || (startsOnSignUp() ? "up" : "in")} startEmail={authStart?.email} />;
   }
 
   return (

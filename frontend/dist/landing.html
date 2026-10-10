@@ -52,18 +52,57 @@
     .phone .typed { color: var(--ink); }
     .phone .caret { display: inline-block; width: 2px; height: 1.1em; margin-left: 1px; vertical-align: text-bottom; background: var(--accent); animation: caret 1.1s steps(1) infinite; }
     @keyframes caret { 50% { opacity: 0; } }
-    .phone .dot { display: none; }   /* "Active 1h ago": not online */
-    .phone[data-platform="imessage"] .head { flex-direction: column; gap: 4px; padding-top: 12px; padding-bottom: 8px; text-align: center; }
-    .phone[data-platform="imessage"] .head .sub, .phone[data-platform="imessage"] .dot { display: none; }
-    .phone[data-platform="imessage"] .head .name { font-size: 12px; font-weight: 400; }
-    .phone[data-platform="imessage"] .head .icons { position: absolute; right: 14px; top: 18px; }
-    .phone .receipt { display: none; }
-    .phone[data-platform="imessage"] .receipt { display: block; }
     .reaction { position: absolute; right: -10px; bottom: -12px; width: 26px; height: 26px; border-radius: 9999px; display: grid; place-items: center;
                 background: #1f1f23; border: 2px solid var(--bg, #0a0a0c); color: #cbd5e1; }
+    /* ---- the three apps' own chrome: every piece is tagged .p-m (Messenger), .p-i (Instagram) or .p-s (iMessage) ---- */
+    .phone .ico { width: 22px; height: 22px; flex: none; display: block; }
+    .phone .p-m, .phone .p-i, .phone .p-s { display: none; }
+    .phone[data-platform="messenger"] .p-m, .phone[data-platform="instagram"] .p-i, .phone[data-platform="imessage"] .p-s { display: flex; }
+    .phone .av { border-radius: 9999px; background: linear-gradient(180deg, #8b93a1, #5b6372); flex: none; }
+    .phone .bubble { color: transparent; user-select: none; }            /* the words are left blank; the bubbles keep their size */
+    .phone .ph { color: var(--sub); white-space: nowrap; }
+    .phone .field { min-width: 0; }
+    @media (max-width: 420px) { .phone .field { font-size: 13px; } .phone .p-m .ico, .phone .p-i .ico { width: 18px !important; height: 18px !important; } }
+    #typed:not(:empty) ~ .ph { display: none; }                          /* the hint shows only while nothing is typed */
+    .phone[data-platform="instagram"] .head .name { font-weight: 600; }
+    .phone[data-platform="messenger"] .head .name { font-weight: 700; }
+    .phone .ig-cam { background: linear-gradient(135deg, #3797f0, #6a5cff); color: #fff; }
+    .phone .im-plus { background: #2c2c2e; color: #8e8e93; }
+    .phone[data-platform="imessage"] .field { background: transparent; border-color: #3a3a3c; }
+    .phone[data-platform="instagram"] .field { background: transparent; border-color: #363636; }
+    .phone[data-platform="messenger"] .field { border-color: transparent; }
     .tab[aria-selected="true"] { background: #2563EB; color: #fff; box-shadow: 0 0 22px rgba(37, 99, 235, .55); }
     .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
     .reveal.in { opacity: 1; transform: none; }
+    /* ---- hero stage: the video sits on the right; everything fades out towards the text on the left ---- */
+    html, body { overflow-x: clip; }   /* the video bleeds past the right edge on purpose */
+    .stage { position: relative; height: 620px; margin-right: -1.25rem; }
+    @media (min-width: 1024px) { .stage { height: 680px; margin-right: -6rem; } }
+    @media (max-width: 1023px) { .stage { height: 540px; } }
+    .stage-fade { position: absolute; inset: 0;
+      -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.25) 22%, #000 58%), linear-gradient(to bottom, transparent 0%, #000 10%, #000 88%, transparent 100%);
+      -webkit-mask-composite: source-in; mask-composite: intersect;
+      mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.25) 22%, #000 58%), linear-gradient(to bottom, transparent 0%, #000 10%, #000 88%, transparent 100%); }
+    .chat-video { position: absolute; right: 4%; top: 50%; transform: translateY(-50%); height: 94%; aspect-ratio: 9 / 16; width: auto;
+      object-fit: cover; border-radius: 36px; border: 1px solid rgba(255,255,255,.10); background: #000;
+      box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 70px rgba(37,99,235,.28);
+      /* the recording itself fades out to the left, into the photos behind it */
+      -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.55) 22%, #000 50%);
+      mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.55) 22%, #000 50%); }
+    .popup { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: min(430px, 100%); z-index: 2;
+      background: rgba(12, 12, 16, .72); box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+    @media (max-width: 1023px) { .popup { left: 50%; transform: translate(-50%, -50%); width: min(400px, calc(100% - 8px)); } }
+    .float-emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+    .drift { position: absolute; left: var(--x); top: var(--y); width: var(--w); aspect-ratio: 3 / 4; object-fit: cover; border-radius: 18px;
+      opacity: var(--o); filter: blur(1.2px) saturate(1.1); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 16px 40px rgba(0,0,0,.5);
+      transform: rotate(var(--r)); animation: drift var(--t) ease-in-out infinite alternate; }
+    .float-emoji { position: absolute; left: var(--x); top: var(--y); font-size: var(--s); line-height: 1; filter: drop-shadow(0 8px 18px rgba(0,0,0,.45));
+      animation: bob var(--t) ease-in-out infinite alternate; }
+    @keyframes drift { from { transform: rotate(var(--r)) translateY(-10px); } to { transform: rotate(calc(var(--r) * -0.6)) translateY(12px); } }
+    @keyframes bob { from { transform: translateY(-12px) rotate(-6deg); } to { transform: translateY(12px) rotate(6deg); } }
+    @media (max-width: 640px) { .drift:nth-of-type(n+5), .float-emoji:nth-of-type(n+5) { display: none; } }
+    @media (max-width: 640px) { .drift { width: calc(var(--w) * .72); } .float-emoji { font-size: calc(var(--s) * .8); } .chat-video { right: 2%; height: 90%; border-radius: 28px; } }
+    @media (prefers-reduced-motion: reduce) { .drift, .float-emoji { animation: none; } }
     @media (prefers-reduced-motion: reduce) { .phone .caret { animation: none; } .reveal { opacity: 1; transform: none; transition: none; } .phone, .phone * { transition: none; } }
   </style>
 </head>
@@ -97,7 +136,8 @@
           <a class="hover:text-white transition-colors" href="#faq">FAQ</a>
         </div>
         <div class="flex items-center gap-2">
-          <a href="/" class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-5 py-2 text-sm font-semibold">Start Chatting</a>
+          <a href="/app" data-signin class="hidden sm:inline-block rounded-full px-4 py-2 text-sm font-semibold text-cool hover:text-white transition-colors">Sign in</a>
+          <a href="/app?signup=1" data-start class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-5 py-2 text-sm font-semibold">Start Chatting</a>
           <button id="menuBtn" class="md:hidden glass rounded-full w-10 h-10 grid place-items-center" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
           </button>
@@ -108,6 +148,7 @@
         <a class="block py-2 hover:text-white" href="#how">How It Works</a>
         <a class="block py-2 hover:text-white" href="/privacy.html">Privacy</a>
         <a class="block py-2 hover:text-white" href="#faq">FAQ</a>
+        <a class="block py-2 hover:text-white" href="/app" data-signin>Sign in</a>
       </div>
     </div>
   </header>
@@ -133,14 +174,14 @@
           Use <strong class="text-white font-semibold">IMY</strong> to talk to them while still maintaining your <span class="whitespace-nowrap">self-respect</span>.
         </p>
         <div class="mt-9 flex flex-wrap gap-3">
-          <a href="/" class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Try Demo</a>
-          <a href="/" class="glass rounded-full px-7 py-3 font-semibold hover:bg-white/10 transition-colors">Upload a conversation</a>
+          <a href="/app?signup=1" data-start class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Start Chatting</a>
+          <a href="/app" data-signin class="glass rounded-full px-7 py-3 font-semibold hover:bg-white/10 transition-colors">Sign in</a>
         </div>
         <!-- what people worry about first, answered before they ask -->
         <ul class="mt-7 flex flex-wrap gap-x-6 gap-y-2 text-sm text-cool">
           <li class="flex items-center gap-2">
             <svg class="text-brand-500 shrink-0" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-            Stays on your laptop
+            Private to your account
           </li>
           <li class="flex items-center gap-2">
             <svg class="text-brand-500 shrink-0" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M4 4l16 16"/></svg>
@@ -153,9 +194,51 @@
         </ul>
       </div>
 
-      <!-- hero visual: interactive mockup -->
-      <div class="relative">
-        <div class="glass rounded-[28px] p-4 sm:p-5 max-w-md mx-auto">
+      <!-- hero visual: a looping, blurred recording of a chat, fading out to the left, with real photos
+           and emojis drifting behind it. Decorative only, so screen readers skip it. -->
+      <div class="stage">
+        <div class="stage-fade" aria-hidden="true">
+          <img class="drift" src="/media/cafe-lights.jpg" alt="" loading="lazy" style="--x:4%;--y:4%;--w:150px;--r:-9deg;--t:11s;--o:.55">
+          <img class="drift" src="/media/cake.jpg" alt="" loading="lazy" style="--x:20%;--y:56%;--w:138px;--r:7deg;--t:13s;--o:.6">
+          <img class="drift" src="/media/bookstore.jpg" alt="" loading="lazy" style="--x:30%;--y:12%;--w:120px;--r:5deg;--t:12s;--o:.7">
+          <img class="drift" src="/media/ensaymada.jpg" alt="" loading="lazy" style="--x:2%;--y:62%;--w:118px;--r:-6deg;--t:10s;--o:.45">
+          <img class="drift" src="/media/outfit.jpg" alt="" loading="lazy" style="--x:42%;--y:66%;--w:112px;--r:-4deg;--t:14s;--o:.75">
+          <img class="drift" src="/media/night-porch.jpg" alt="" loading="lazy" style="--x:44%;--y:-2%;--w:104px;--r:8deg;--t:12.5s;--o:.7">
+          <span class="float-emoji" style="--x:16%;--y:38%;--s:44px;--t:9s">🥺</span>
+          <span class="float-emoji" style="--x:38%;--y:44%;--s:36px;--t:11s">💙</span>
+          <span class="float-emoji" style="--x:8%;--y:28%;--s:30px;--t:10s">😭</span>
+          <span class="float-emoji" style="--x:46%;--y:30%;--s:40px;--t:12s">🫶</span>
+          <span class="float-emoji" style="--x:28%;--y:84%;--s:34px;--t:10.5s">❤️</span>
+          <span class="float-emoji" style="--x:52%;--y:88%;--s:30px;--t:9.5s">✨</span>
+          <video class="chat-video" autoplay muted loop playsinline preload="auto" poster="/media/chat-loop.jpg">
+            <source src="/media/chat-loop.mp4" type="video/mp4">
+            <source src="/media/chat-loop.webm" type="video/webm">
+          </video>
+        </div>
+        <!-- in front: the conversation that ended, and the message you almost sent -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M15 4 7 12l8 8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M20 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z" fill="currentColor"/></symbol>
+  <symbol id="i-phone-o" viewBox="0 0 24 24"><path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h8A2.5 2.5 0 0 1 16 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 3 16.5zM17.5 10.2l3.7-2.3a.6.6 0 0 1 .9.5v7.2a.6.6 0 0 1-.9.5l-3.7-2.3z" fill="currentColor"/></symbol>
+  <symbol id="i-video-o" viewBox="0 0 24 24"><rect x="3" y="6.5" width="12.5" height="11" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15.5 10.5l5-2.8v8.6l-5-2.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><path d="M9 4 7.6 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2.6L15 4zM12 9a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" fill="currentColor" fill-rule="evenodd"/></symbol>
+  <symbol id="i-cam-o" viewBox="0 0 24 24"><path d="M9 5 7.8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2.8L15 5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+  <symbol id="i-img" viewBox="0 0 24 24"><rect x="3" y="3.5" width="18" height="17" rx="4" fill="currentColor"/><path d="m5.5 17 4.2-5 3 3.4 2.1-2.3L19 17z" fill="#000"/><circle cx="15.8" cy="8.6" r="1.6" fill="#000"/></symbol>
+  <symbol id="i-img-o" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m5.5 17 4.2-4.8 3 3.2 2.2-2.4 3.6 4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="15.5" cy="9" r="1.4" fill="currentColor"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3" fill="currentColor"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-mic-o" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus-c" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M12 7.5v9M7.5 12h9" stroke="#000" stroke-width="2.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus-o" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.8v8.4M7.8 12h8.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.2 14a4.2 4.2 0 0 0 7.6 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9" cy="9.7" r="1.1" fill="currentColor"/><circle cx="15" cy="9.7" r="1.1" fill="currentColor"/></symbol>
+  <symbol id="i-sticker" viewBox="0 0 24 24"><path d="M12.5 3.5H7a3.5 3.5 0 0 0-3.5 3.5v10A3.5 3.5 0 0 0 7 20.5h6.5a7 7 0 0 0 7-7V7A3.5 3.5 0 0 0 17 3.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M20.4 13.5h-3a3.9 3.9 0 0 0-3.9 3.9v3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 11.3a3.5 3.5 0 0 0 6 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-like" viewBox="0 0 24 24"><path d="M2 21h4V9H2zM23 11a2 2 0 0 0-2-2h-6.3l1-4.6v-.3a1.5 1.5 0 0 0-.44-1.06L14.2 2 7.6 8.6A2 2 0 0 0 7 10v9a2 2 0 0 0 2 2h9a2 2 0 0 0 1.8-1.1l3-7A2 2 0 0 0 23 12z" fill="currentColor"/></symbol>
+  <symbol id="i-down" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-right" viewBox="0 0 10 10"><path d="M3.5 2 6.5 5 3.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</defs></svg>
+        <div class="popup glass rounded-[28px] p-4 sm:p-5">
           <div role="tablist" aria-label="Chat platform" class="glass rounded-full p-1 grid grid-cols-3 text-xs sm:text-sm font-medium text-cool mb-4">
             <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="false" data-platform="messenger">Messenger</button>
             <button class="tab rounded-full py-2 transition-all" role="tab" aria-selected="true" data-platform="instagram">Instagram DMs</button>
@@ -163,28 +246,66 @@
           </div>
 
           <div id="phone" class="phone rounded-[22px] overflow-hidden border border-white/10" data-platform="instagram" role="tabpanel">
-            <div class="head relative flex items-center gap-3 px-4 py-3">
-              <span class="relative w-9 h-9 rounded-full bg-gradient-to-b from-slate-400 to-slate-600 grid place-items-center text-xs font-semibold text-white shrink-0">L
-                <span class="dot absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-black"></span>
-              </span>
+            <!-- header: Messenger, Instagram and iMessage each draw their own -->
+            <div class="head p-m items-center gap-2.5 pl-2 pr-4 py-2.5">
+              <svg class="ico accent" style="width:26px;height:26px"><use href="#i-chev"/></svg>
+              <span class="av w-9 h-9"></span>
               <div class="min-w-0 flex-1">
-                <div class="name text-base leading-tight" aria-label="Their nickname">😼</div>
-                <div id="status" class="sub text-xs">Active 1h ago</div>
+                <div class="name text-[15px] leading-tight flex items-center gap-1" aria-label="Their nickname">😼 <svg class="sub" style="width:9px;height:9px"><use href="#i-down"/></svg></div>
+                <div class="sub text-xs js-status">Active 1h ago</div>
               </div>
-              <div class="icons accent flex gap-3">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.500" width="12" height="11" rx="2.500"/><path d="M15 10.500l5.500-3v9l-5.500-3z"/></svg>
-              </div>
+              <svg class="ico accent" style="width:23px;height:23px"><use href="#i-phone"/></svg>
+              <svg class="ico accent" style="width:25px;height:25px"><use href="#i-video"/></svg>
             </div>
-            <div class="px-4 py-5 space-y-2 min-h-[230px]">
+            <div class="head p-i items-center gap-3 pl-3 pr-4 py-2.5">
+              <svg class="ico" style="width:24px;height:24px"><use href="#i-arrow"/></svg>
+              <span class="av w-9 h-9"></span>
+              <div class="min-w-0 flex-1">
+                <div class="name text-[15px] leading-tight" aria-label="Their nickname">😼</div>
+                <div class="sub text-xs js-status">Active 1h ago</div>
+              </div>
+              <svg class="ico" style="width:24px;height:24px"><use href="#i-phone-o"/></svg>
+              <svg class="ico" style="width:26px;height:26px"><use href="#i-video-o"/></svg>
+            </div>
+            <div class="head p-s items-center justify-between pl-2 pr-4 pt-2.5 pb-2 relative">
+              <div class="accent flex items-center gap-1 w-14"><svg class="ico" style="width:24px;height:24px"><use href="#i-chev"/></svg></div>
+              <div class="flex flex-col items-center gap-1">
+                <span class="av w-10 h-10"></span>
+                <div class="name text-[11px] flex items-center gap-1" aria-label="Their nickname">😼 <svg class="sub" style="width:7px;height:7px"><use href="#i-right"/></svg></div>
+              </div>
+              <div class="w-14 flex justify-end accent"><svg class="ico" style="width:26px;height:26px"><use href="#i-video-o"/></svg></div>
+            </div>
+
+            <div class="px-4 py-5 space-y-2 min-h-[290px]">
               <!-- the date the chat stopped; each platform writes it its own way (see PLATFORMS below) -->
               <div id="stamp" class="sub text-center text-[11px] pb-2">Sep 26, 2026</div>
-              <div class="flex"><span class="bubble them">soo.. i guess this is it?</span></div>
-              <div class="flex justify-end"><span class="bubble me">yeah i guess so</span></div>
-              <div class="receipt text-right text-[11px] sub pr-1">Delivered</div>
+              <div class="flex items-end gap-2"><span class="av w-[22px] h-[22px] p-m p-i" aria-hidden="true"></span><span class="bubble them" aria-hidden="true">soo.. i guess this is it?</span></div>
+              <div class="flex justify-end"><span class="bubble me" aria-hidden="true">yeah i guess so</span></div>
+              <div class="receipt p-s justify-end text-[11px] sub pr-1">Delivered</div>
+              <div class="receipt p-i justify-end text-[11px] sub pr-1">Seen</div>
+              <div class="receipt p-m justify-end pr-1"><span class="av w-[14px] h-[14px]"></span></div>
             </div>
-            <div class="px-3 pb-3">
+
+            <!-- footer: the camera, photo and mic buttons each app really has, and the message you typed but didn't send -->
+            <div class="px-3 pb-3 pt-1 flex items-center gap-2">
+              <div class="p-m items-center gap-2 accent">
+                <svg class="ico" style="width:22px;height:22px"><use href="#i-plus-c"/></svg>
+                <svg class="ico" style="width:22px;height:22px"><use href="#i-cam"/></svg>
+                <svg class="ico" style="width:22px;height:22px"><use href="#i-img"/></svg>
+                <svg class="ico" style="width:20px;height:20px"><use href="#i-mic"/></svg>
+              </div>
+              <span class="ig-cam p-i w-9 h-9 rounded-full items-center justify-center"><svg class="ico" style="width:20px;height:20px"><use href="#i-cam"/></svg></span>
+              <span class="im-plus p-s w-8 h-8 rounded-full items-center justify-center"><svg class="ico" style="width:18px;height:18px"><use href="#i-plus"/></svg></span>
               <!-- the message you typed but didn't send -->
-              <div class="field rounded-full px-4 py-2 text-sm"><span id="typed" class="typed font-bold">i miss you</span><span class="caret" aria-hidden="true"></span></div>
+              <div class="field flex-1 min-w-0 rounded-full pl-4 pr-3 py-2 text-sm flex items-center gap-2 whitespace-nowrap overflow-hidden">
+                <span id="typed" class="typed font-semibold whitespace-nowrap shrink-0">i miss you</span><span class="caret" aria-hidden="true"></span>
+                <span class="ph p-m">Aa</span><span class="ph p-i">Message...</span><span class="ph p-s">iMessage</span>
+                <span class="flex-1"></span>
+                <svg class="ico p-m accent" style="width:21px;height:21px"><use href="#i-smile"/></svg>
+                <span class="p-i items-center gap-2.5"><svg class="ico" style="width:20px;height:20px"><use href="#i-mic-o"/></svg><svg class="ico" style="width:20px;height:20px"><use href="#i-img-o"/></svg><svg class="ico" style="width:20px;height:20px"><use href="#i-sticker"/></svg><svg class="ico" style="width:20px;height:20px"><use href="#i-plus-o"/></svg></span>
+                <svg class="ico p-s sub" style="width:19px;height:19px"><use href="#i-mic-o"/></svg>
+              </div>
+              <svg class="ico p-m accent" style="width:24px;height:24px"><use href="#i-like"/></svg>
             </div>
           </div>
           <p class="mt-3 text-center text-xs text-cool">Tap a platform. The chat changes to match.</p>
@@ -261,7 +382,7 @@
         <div class="reveal">
           <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">The messages people almost send</h2>
           <p class="mt-4 text-cool leading-relaxed max-w-md">Typed at midnight, stared at, deleted. They still needed to be said. IMY gives them somewhere to go.</p>
-          <a href="/" class="btn-glow inline-block mt-8 rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold">Say yours</a>
+          <a href="/app?signup=1" class="btn-glow inline-block mt-8 rounded-full bg-brand-600 hover:bg-brand-500 px-7 py-3 font-semibold">Say yours</a>
         </div>
         <div class="reveal space-y-3" aria-label="Examples of unsent messages">
           <div class="draft-row lg:pr-24"><span class="draft ig">gising ka pa?</span><small>Not sent</small></div>
@@ -315,7 +436,7 @@
         </details>
       </div>
       <div class="reveal mt-14 text-center">
-        <a href="/" class="btn-glow inline-block rounded-full bg-brand-600 hover:bg-brand-500 px-8 py-3.5 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Start Chatting</a>
+        <a href="/app?signup=1" data-start class="btn-glow inline-block rounded-full bg-brand-600 hover:bg-brand-500 px-8 py-3.5 font-semibold shadow-[0_0_28px_rgba(37,99,235,.45)]">Start Chatting</a>
       </div>
     </section>
   </main>
@@ -324,12 +445,17 @@
   <footer class="border-t border-white/[0.08]">
     <div class="mx-auto max-w-6xl px-5 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-cool">
       <p>© <span id="year"></span> IMY. Preserving your peace of mind.</p>
+      <img src="/media/pdyn-logo.png" alt="PDYN Technologies" height="28" class="h-7 w-auto opacity-90">
       <a href="/privacy.html" class="hover:text-white transition-colors">Privacy Policy</a>
       <a href="/terms.html" class="hover:text-white transition-colors">Terms</a>
     </div>
   </footer>
 
   <script>
+    // a "forgot password" link from an older email lands on the reset page
+    const toReset = () => { if (location.hash.startsWith('#reset=')) location.replace('/app' + location.hash); };
+    toReset(); addEventListener('hashchange', toReset);
+
     // ---- platform switcher: swap the mockup's skin + a few words ----
     const PLATFORMS = {
       messenger: { status: 'Active 1h ago', stamp: 'SEP 26, 2026' },
@@ -341,7 +467,7 @@
     function setPlatform(id) {
       const p = PLATFORMS[id];
       phone.dataset.platform = id;
-      document.getElementById('status').textContent = p.status;
+      document.querySelectorAll('.js-status').forEach((el) => { el.textContent = p.status; });
       document.getElementById('stamp').textContent = p.stamp;
       tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.platform === id)));
     }
@@ -368,6 +494,24 @@
       }
     }
     loop();
+
+    // ---- the hero video: still for people who prefer less motion; never stalls the page ----
+    const chatVideo = document.querySelector('.chat-video');
+    if (chatVideo) {
+      const still = matchMedia('(prefers-reduced-motion: reduce)');
+      const apply = () => { if (still.matches) chatVideo.pause(); else chatVideo.play().catch(() => {}); };
+      apply(); still.addEventListener?.('change', apply);
+    }
+
+    // ---- signed in already? the top button opens your chats instead ----
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || !d.user) return;
+        document.querySelectorAll('[data-signin]').forEach((el) => { el.style.display = 'none'; });
+        document.querySelectorAll('[data-start]').forEach((el) => { el.textContent = 'Open your chats'; el.href = '/app'; });
+      })
+      .catch(() => {});
 
     // ---- mobile menu ----
     const menuBtn = document.getElementById('menuBtn'), menu = document.getElementById('mobileMenu');

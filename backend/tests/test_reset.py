@@ -53,7 +53,7 @@ def test_a_link_is_emailed_and_the_answer_never_says_who_has_an_account(monkeypa
     assert len(outbox) == 1 and outbox[0]["to"] == "diane@example.com"
     mail = outbox[0]
     assert mail["subject"] == "Reset your imy password"
-    assert "https://imy.example.com/#reset=" in mail["text"]
+    assert "https://imy.example.com/app#reset=" in mail["text"]
     assert "30 minutes" in mail["text"] and "ignore this email" in mail["text"]
     assert link_token(mail) in mail["html"]
 
