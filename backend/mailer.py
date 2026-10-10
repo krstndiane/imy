@@ -199,8 +199,8 @@ def _button(href: str, label: str, solid: bool = True, margin: str = "6px 0 22px
 
 
 def _page(title: str, preheader: str, body: str, footer: str) -> str:
-    logo = (f'<img src="cid:{LOGO_CID}" width="156" height="48" alt="i miss you · IMY" '
-            f'style="display:block;border:0;outline:none;margin:0 0 26px -4px;width:156px;height:48px">'
+    logo = (f'<img src="cid:{LOGO_CID}" width="108" height="40" alt="i miss you" '
+            f'style="display:block;border:0;outline:none;margin:0 0 26px -3px;width:108px;height:40px">'
             if LOGO.is_file() else
             f'<p style="margin:0 0 26px;font-family:{FONT};font-size:18px;font-weight:800;color:{INK}">IMY</p>')
     pdyn = (f'<tr><td style="padding:18px 12px 0;text-align:center"><img src="cid:{PDYN_CID}" width="140" height="35" '

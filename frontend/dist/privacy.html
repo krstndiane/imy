@@ -6,6 +6,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Privacy — IMY</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/media/favicon-32.png">
+  <link rel="apple-touch-icon" href="/media/apple-touch-icon.png">
   <meta name="description" content="What imy stores, who can see it, and how to delete it." />
   <!-- Styled on its own, with no CDN and no web fonts: a page explaining what happens to people's
        data shouldn't itself send their browser to anyone else's servers. -->
@@ -21,7 +24,10 @@
     header { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid rgba(255,255,255,.08);
              background: rgba(10,10,12,.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
     header .wrap { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; padding-bottom: 14px; }
-    .brandmark { font-size: 1.1rem; font-weight: 800; letter-spacing: -.02em; color: #fff; text-decoration: none; }
+    .brandmark { position: relative; display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; background: #1c1c20;
+      border: 1px solid rgba(255,255,255,.12); color: #fff; font-size: 11.5px; font-weight: 500; line-height: 1; text-decoration: none; white-space: nowrap; }
+    .brandmark i { position: absolute; right: -6px; bottom: -7px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+      background: #1f1f23; border: 1.5px solid #0a0a0c; color: #cbd5e1; box-sizing: border-box; }
     .openlink { font-size: .88rem; color: #94A3B8; text-decoration: none; }
     .openlink:hover { color: #fff; }
     main { position: relative; z-index: 1; padding: 44px 0 20px; }
@@ -51,7 +57,7 @@
 
   <header>
     <div class="wrap">
-      <a href="/landing.html" class="brandmark">IMY</a>
+      <a href="/landing.html" class="brandmark" aria-label="imy home">i miss you<i aria-hidden="true"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="13" r="7.5"/><path d="M7.7 14.7a3.6 3.6 0 0 0 5.6 0M8.2 11v.1M12.8 11v.1M19 2v6M16 5h6"/></svg></i></a>
       <a href="/" class="openlink">Open imy →</a>
     </div>
   </header>

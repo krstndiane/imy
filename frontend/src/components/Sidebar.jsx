@@ -9,7 +9,7 @@ export { initials };   // other screens still import it from here
 export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onTheme, user, onSignedOut }) {
   return (
     <aside className="sidebar">
-      <a className="brand" href="/landing.html" title="About IMY" style={{ color: "inherit", textDecoration: "none" }}>
+      <a className="brand" href="/landing.html" title="About imy" aria-label="imy home" style={{ color: "inherit", textDecoration: "none" }}>
         <span className="logo-pill">
           i miss you
           <i aria-hidden="true">
@@ -18,7 +18,6 @@ export default function Sidebar({ persons, activeId, onSelect, onNew, theme, onT
             </svg>
           </i>
         </span>
-        IMY
       </a>
       <button className="btn primary block" onClick={onNew}>Create new person</button>
       <nav className="people" aria-label="People">

@@ -11,7 +11,9 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'">
   <title>imy admin</title>
-  <link rel="icon" href="/media/pdyn-logo.png">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/media/favicon-32.png">
+  <link rel="apple-touch-icon" href="/media/apple-touch-icon.png">
   <style>
     :root {
       color-scheme: dark;
@@ -65,6 +67,11 @@
     .bar img { height: 24px; width: auto; display: block; }
     .bar .sep { width: 1px; height: 22px; background: var(--line-2); }
     .bar .title { font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+    .imy-pill { position: relative; display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; background: #1c1c20;
+      border: 1px solid rgba(255,255,255,.12); color: #fff; font-size: 11.5px; font-weight: 500; line-height: 1; white-space: nowrap; margin-right: 6px; }
+    .imy-pill i { position: absolute; right: -6px; bottom: -7px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+      background: #1f1f23; border: 1.5px solid var(--bg); color: #cbd5e1; box-sizing: border-box; }
+    .gate-card .imy-pill i { border-color: var(--surface); }
     .bar .grow { flex: 1; }
     .bar .who { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
     nav.tabs { display: flex; gap: 4px; padding: 0 0 10px; overflow-x: auto; }
@@ -149,7 +156,7 @@
     footer.foot img { height: 20px; width: auto; opacity: .85; display: block; }
 
     @media (max-width: 640px) {
-      .bar .who, .bar .sep, .bar .title-long { display: none; }
+      .bar .who, .bar .sep, .bar .title { display: none; }
       .hero .value { font-size: 48px; }
     }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -160,7 +167,8 @@
   <section id="gate" class="gate hidden" aria-labelledby="gate-title">
     <div class="gate-card">
       <img src="/media/pdyn-logo.png" alt="PDYN Technologies">
-      <h1 id="gate-title">imy admin</h1>
+      <div style="margin:0 0 14px"><span class="imy-pill" aria-label="imy">i miss you<i aria-hidden="true"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="13" r="7.5"/><path d="M7.7 14.7a3.6 3.6 0 0 0 5.6 0M8.2 11v.1M12.8 11v.1M19 2v6M16 5h6"/></svg></i></span></div>
+      <h1 id="gate-title">Admin</h1>
       <p>For the people running imy. Sign in with your imy account.</p>
       <p id="gate-account" class="note small hidden" role="status"></p>
       <form id="gate-form" novalidate>
@@ -183,7 +191,8 @@
         <div class="bar">
           <img src="/media/pdyn-logo.png" alt="PDYN Technologies">
           <span class="sep" aria-hidden="true"></span>
-          <span class="title">imy <span class="title-long">admin</span></span>
+          <span class="imy-pill" aria-label="imy">i miss you<i aria-hidden="true"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="13" r="7.5"/><path d="M7.7 14.7a3.6 3.6 0 0 0 5.6 0M8.2 11v.1M12.8 11v.1M19 2v6M16 5h6"/></svg></i></span>
+          <span class="title">Admin</span>
           <span class="grow"></span>
           <span class="who" id="who"></span>
           <a class="btn ghost" href="/" target="_blank" rel="noopener">Open site ↗</a>
