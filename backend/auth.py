@@ -40,7 +40,7 @@ SESSION_DAYS = 30
 MIN_PASSWORD = 8
 # Change this whenever terms.html changes. Each account keeps the version it agreed to at sign-up,
 # so you can always tell who agreed to what.
-TERMS_VERSION = "2026-10-10"
+TERMS_VERSION = "2026-10-13"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]{2,}$")
 
 # scrypt settings. Higher n = slower to guess, but also slower to sign in; 2**14 takes a few
@@ -237,7 +237,7 @@ def load_session(token: str) -> dict | None:
     th = _hash_token(token)
     with db() as conn:
         row = conn.execute(
-            "SELECT u.id, u.email, u.created_at, u.is_adult, s.expires_at FROM sessions s "
+            "SELECT u.id, u.email, u.created_at, u.is_adult, u.cloud_ai, u.terms_version, s.expires_at FROM sessions s "
             "JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?", (th,)).fetchone()
         if not row:
             return None
@@ -245,7 +245,8 @@ def load_session(token: str) -> dict | None:
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (th,))
             return None
         return {"id": row["id"], "email": row["email"], "created_at": row["created_at"],
-                "is_adult": bool(row["is_adult"])}
+                "is_adult": bool(row["is_adult"]), "cloud_ai": bool(row["cloud_ai"]),
+                "terms_version": row["terms_version"] or ""}
 
 
 def end_session(token: str) -> None:
@@ -293,6 +294,39 @@ def current() -> dict | None:
 def current_id() -> int | None:
     me = CURRENT.get()
     return me["id"] if me else None
+
+
+# ---------------------------------------------------------------- the account's own choices
+def cloud_ai_allowed(user: dict | None = None) -> bool:
+    """False once this account has switched off "let an outside AI help write replies" (account menu).
+    Every place that would send a chat to Groq, Gemini or Claude checks this first (llm.enabled,
+    usage.blocked, claude.enabled), so one switch covers them all. Nobody signed in (tests, scripts)
+    counts as allowed; the site's own settings (no key, IMY_AI_MODE=off) still apply separately."""
+    me = CURRENT.get() if user is None else user
+    return True if not me else bool(me.get("cloud_ai", True))
+
+
+def set_cloud_ai(user_id: int, on: bool) -> None:
+    with db() as conn:
+        conn.execute("UPDATE users SET cloud_ai = ? WHERE id = ?", (1 if on else 0, user_id))
+    me = CURRENT.get()
+    if me and me.get("id") == user_id:
+        CURRENT.set({**me, "cloud_ai": bool(on)})
+
+
+def terms_current(user: dict | None = None) -> bool:
+    """This account has agreed to the Terms as they stand now (TERMS_VERSION). The app asks anyone
+    who hasn't to read and agree again before going on."""
+    me = CURRENT.get() if user is None else user
+    return bool(me) and me.get("terms_version", "") == TERMS_VERSION
+
+
+def accept_terms(user_id: int) -> None:
+    with db() as conn:
+        conn.execute("UPDATE users SET terms_version = ?, terms_at = ? WHERE id = ?", (TERMS_VERSION, now(), user_id))
+    me = CURRENT.get()
+    if me and me.get("id") == user_id:
+        CURRENT.set({**me, "terms_version": TERMS_VERSION})
 
 
 def secure_cookies(request=None) -> bool:

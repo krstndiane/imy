@@ -22,12 +22,18 @@ export default function Account({ user, onSignedOut }) {
   const [ai, setAi] = useState(null);       // {used, limit} for today, fetched when the menu opens
   const [isAdmin, setIsAdmin] = useState(false);   // this account's email is one of the site's admins
   const [contact, setContact] = useState("");      // the site's public inbox (IMY_CONTACT_EMAIL)
+  const [cloudAi, setCloudAi] = useState(null);    // true/false once known: may an outside AI help write replies?
+  const [aiAvailable, setAiAvailable] = useState(false);   // the site has an outside AI set up at all
 
   useEffect(() => {
     if (open !== "menu") return;
     let live = true;
-    api.me().then((r) => { if (live) { setAi(r.user?.ai_today || null); setIsAdmin(!!r.user?.is_admin); } }).catch(() => {});
-    api.status().then((s) => live && setContact(s.contact || "")).catch(() => {});
+    api.me().then((r) => {
+      if (!live) return;
+      setAi(r.user?.ai_today || null); setIsAdmin(!!r.user?.is_admin);
+      setCloudAi(r.user ? r.user.cloud_ai !== false : null);
+    }).catch(() => {});
+    api.status().then((s) => { if (live) { setContact(s.contact || ""); setAiAvailable(!!s.ai?.available); } }).catch(() => {});
     return () => { live = false; };
   }, [open]);
 
@@ -46,6 +52,10 @@ export default function Account({ user, onSignedOut }) {
   const deleteEverything = (e) => {
     e.preventDefault();
     run(() => api.deleteAccount(pw, confirm), onSignedOut);
+  };
+  const toggleCloudAi = (e) => {
+    const on = e.target.checked;
+    run(() => api.setCloudAi(on).then(() => setCloudAi(on)));
   };
 
   return (
@@ -113,10 +123,20 @@ export default function Account({ user, onSignedOut }) {
               </span>
             </div>
           )}
+          {aiAvailable && cloudAi !== null && (
+            <label className="check">
+              <input type="checkbox" checked={cloudAi} disabled={busy} onChange={toggleCloudAi} />
+              <span>
+                Let an outside AI help write replies. Recent messages, and photos you share, go to an AI service for
+                each reply. Off: nothing leaves imy and replies come from imy itself.
+              </span>
+            </label>
+          )}
           <div className="actions column">
             {isAdmin && <a className="btn small primary" href="/admin">Admin page</a>}
             <button className="btn small" onClick={() => { setOpen("password"); setError(""); }}>Change password</button>
             <a className="btn small" href="/privacy.html" target="_blank" rel="noreferrer">What imy stores</a>
+            <a className="btn small" href="/api/auth/export" download>Download my data</a>
             <a className="btn small" href="/terms.html" target="_blank" rel="noreferrer">Terms</a>
             {contact && <a className="btn small" href={`mailto:${contact}`} title={contact}>Contact us</a>}
             <button className="btn small" onClick={signOut} disabled={busy}>Sign out</button>

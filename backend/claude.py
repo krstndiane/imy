@@ -55,7 +55,10 @@ _client = None
 
 
 def enabled() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY")) and os.environ.get("IMY_CLAUDE", "1") != "0"
+    if not (os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("IMY_CLAUDE", "1") != "0"):
+        return False
+    from . import auth        # an account that switched off the outside AI never reaches Anthropic either
+    return auth.cloud_ai_allowed()
 
 
 def client():

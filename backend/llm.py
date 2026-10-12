@@ -34,6 +34,7 @@ import time
 import urllib.error
 import urllib.request
 
+from . import auth
 from . import claude  # noqa: F401  (importing it loads the .env file)
 from . import usage
 
@@ -89,7 +90,8 @@ def provider() -> str | None:
 
 
 def enabled() -> bool:
-    return bool(providers())
+    """An AI service is set up AND this account hasn't switched the outside AI off (account menu)."""
+    return bool(providers()) and auth.cloud_ai_allowed()
 
 
 def label() -> str:
@@ -102,7 +104,9 @@ def label() -> str:
 def status() -> dict:
     """For /api/status: which brain is on (never the keys themselves)."""
     gem_free = "gemini" in providers() and os.environ.get("IMY_GEMINI_PAID") != "1"
-    return {"mode": mode(), "providers": providers(), "last": dict(_last),
+    opted_out = bool(providers()) and not auth.cloud_ai_allowed()     # this account switched it off
+    return {"mode": mode(), "providers": [] if opted_out else providers(),
+            "available": bool(providers()), "opted_out": opted_out, "last": dict(_last),
             "warning": "Gemini's free tier isn't meant for personal chats; use it only with billing on."
             if gem_free else ""}
 
@@ -399,7 +403,7 @@ def _vision_candidates() -> list[tuple[str, str]]:
 
 
 def can_see() -> bool:
-    return bool(providers())
+    return bool(providers()) and auth.cloud_ai_allowed()
 
 
 def see(data_url: str, prompt: str = SEE_PROMPT) -> str:

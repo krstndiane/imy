@@ -27,11 +27,12 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from . import auth, backup, claude, engine, importers, insights, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
+from . import account_export, auth, backup, claude, engine, importers, insights, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
 from . import feedback as feedback_mod
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
@@ -147,6 +148,7 @@ LIMITS = {"chat": (40, 60), "upload": (120, 60), "import": (20, 60),
           "forgot": (5, 900),       # "email me a reset link": 5 per 15 minutes, per visitor
           "admin": (5, 900),        # "email me an admin link"
           "feedback": (6, 3600),    # feedback notes: 6 an hour is plenty for a person, too few for spam
+          "export": (3, 3600),      # "Download my data" builds a zip of everything: 3 an hour is plenty
           "visit": (120, 60)}       # page-view counting
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
 _hits_lock = threading.Lock()
@@ -297,7 +299,9 @@ def who_am_i(request: Request = None):
         people = conn.execute("SELECT COUNT(*) FROM persons WHERE user_id = ?", (me["id"],)).fetchone()[0]
     admin = insights.account_admin(me, request is not None and _local_request(request))
     return {"user": {"id": me["id"], "email": me["email"], "created_at": me["created_at"], "people": people,
-                     "ai_today": usage.summary(me["id"]), "is_admin": admin != "no"}}
+                     "ai_today": usage.summary(me["id"]), "is_admin": admin != "no",
+                     "cloud_ai": auth.cloud_ai_allowed(me),      # false: this account switched the outside AI off
+                     "terms_current": auth.terms_current(me)}}   # false: the Terms changed since they agreed
 
 
 def wipe_account(user_id: int) -> list[int]:
@@ -352,6 +356,39 @@ def delete_account(body: DeleteAccountIn, request: Request = None):
     resp = JSONResponse({"ok": True, "deleted_people": len(pids)})
     resp.delete_cookie(auth.SESSION_COOKIE, path="/")
     return resp
+
+
+class AiChoiceIn(BaseModel):
+    cloud_ai: bool
+
+
+@app.put("/api/auth/ai")
+def choose_cloud_ai(body: AiChoiceIn):
+    """The account's switch for the outside AI. Off means no chat, photo or note from this account is
+    sent to Groq, Gemini or Claude: replies come from imy's own reading of the messages (auth.cloud_ai_allowed)."""
+    me = auth.current()
+    auth.set_cloud_ai(me["id"], body.cloud_ai)
+    return {"cloud_ai": body.cloud_ai}
+
+
+@app.post("/api/auth/accept-terms")
+def agree_to_terms():
+    """Someone who agreed to an older version of the Terms reads the new one and agrees again."""
+    me = auth.current()
+    auth.accept_terms(me["id"])
+    return {"ok": True, "terms_version": auth.TERMS_VERSION}
+
+
+@app.get("/api/auth/export")
+def download_my_data(request: Request = None):
+    """"Download my data": a zip of everything imy holds about this account (see account_export.py).
+    Built into a temporary file and deleted as soon as it has been sent."""
+    rate_limit(request, "export")
+    me = auth.current()
+    path = account_export.build(me["id"])
+    return FileResponse(path, media_type="application/zip", filename=f"imy-my-data-{time.strftime('%Y-%m-%d')}.zip",
+                        headers={"Cache-Control": "no-store"},
+                        background=BackgroundTask(lambda: path.unlink(missing_ok=True)))
 
 
 @app.put("/api/auth/password")

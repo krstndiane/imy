@@ -100,6 +100,19 @@ them rather than to anyone who knows the address.
   asks "these are conversations I was part of, and I won't use imy to pretend to be them" once, and
   keeps that time too. imy can't check that the person being copied agreed — the Terms put that on
   the account, and anyone who's been copied can ask for removal.
+- **"Download my data"** (account menu) builds a zip of everything the account holds: account details,
+  activity, feedback, and for each person their answers, notes, conversation (readable and as JSON),
+  imported messages and the screenshots, shared photos and profile pictures themselves
+  (`backend/account_export.py`, `GET /api/auth/export`, limited to 3 an hour). The password hash and
+  sign-in tokens are left out. The zip is written to `data/tmp/` and deleted as soon as it's sent.
+- **The outside-AI switch.** Account menu → "Let an outside AI help write replies" (on by default).
+  Off means nothing from that account goes to Groq, Gemini or Claude: no replies, no photo
+  descriptions, no memory notes. It's one check, `auth.cloud_ai_allowed()`, used by `llm.enabled()`,
+  `llm.can_see()`, `claude.enabled()` and `usage.blocked()`, so every call site is covered. It's stored
+  as `users.cloud_ai`.
+- **Changing the Terms.** When `terms.html` or `privacy.html` change in a way that matters, update the
+  date at the top of both and bump `TERMS_VERSION` in `auth.py`. Anyone who agreed to an older version
+  sees "We've updated our Terms" once and has to agree again before using imy (`TermsGate.jsx`).
 - **Every chat says what it is.** The top of each conversation reads "Replies are written by AI from
   their old messages. It isn't really them."
 - **The privacy and terms pages** are `frontend/public/privacy.html` and `terms.html`, served at

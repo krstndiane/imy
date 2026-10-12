@@ -79,6 +79,8 @@ def used(user_id: int | None = None) -> int:
 
 def blocked(kind: str = "reply") -> str:
     """"" if the AI may be used right now, otherwise a short reason a person can read."""
+    if not auth.cloud_ai_allowed():
+        return "you've turned off the outside AI for your account"
     site = per_site()
     if site and site_used() >= site:
         return "imy's AI allowance for today is used up; it comes back at midnight"

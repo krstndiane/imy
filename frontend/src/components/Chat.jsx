@@ -408,7 +408,9 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
               <p className="small">
                 {style.ai?.providers?.length
                   ? `Smart replies are on (${style.ai.providers.join(" + ")}): when what they taught imy isn't enough, an AI answers in their style.`
-                  : "Smart replies are off. Add a free Groq key to the .env file to turn them on (see the README)."}
+                  : style.ai?.opted_out
+                    ? "Smart replies are off for your account: nothing leaves imy. You can switch them back on in the account menu."
+                    : "Smart replies are off. Add a free Groq key to the .env file to turn them on (see the README)."}
               </p>
               <label className="check">
                 <input type="checkbox" checked={showWhy} onChange={(e) => toggleWhy(e.target.checked)} />

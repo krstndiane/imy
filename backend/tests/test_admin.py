@@ -25,6 +25,10 @@ def fresh(monkeypatch, admins="owner@imy.test", smtp=True):
     monkeypatch.setenv("IMY_PUBLIC_URL", "https://imy.example.com")
     monkeypatch.setenv("IMY_ADMIN_EMAILS", admins)
     monkeypatch.delenv("IMY_ORIGINS", raising=False)
+    # The real contact address in .env must not leak into these tests (it decides where feedback goes
+    # and who counts as an admin); the tests that care set it themselves, after this.
+    monkeypatch.delenv("IMY_CONTACT_EMAIL", raising=False)
+    monkeypatch.delenv("IMY_FEEDBACK_TO", raising=False)
     if smtp:
         monkeypatch.setenv("IMY_SMTP_HOST", "smtp.example.com")
     else:

@@ -6,6 +6,7 @@ import Trainer from "./components/Trainer";
 import Chat from "./components/Chat";
 import Auth from "./components/Auth";
 import ResetPassword from "./components/ResetPassword";
+import TermsGate from "./components/TermsGate";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 // A "forgot password" email links to  /app#reset=<token>.  The part after # never reaches the server.
@@ -64,6 +65,12 @@ export default function App() {
 
   useEffect(() => { whenSignedOut(signedOut); }, [signedOut]);
 
+  // After signing in, ask again who we are: the sign-in reply is short, and /me also says whether this
+  // account has agreed to the current Terms (terms_current) and which AI choice it made.
+  const signedIn = useCallback((u) => {
+    api.me().then((r) => setUser(r.user || u)).catch(() => setUser(u));
+  }, []);
+
   useEffect(() => {
     let gone = false;
     api.me()
@@ -96,7 +103,7 @@ export default function App() {
     return (
       <ResetPassword
         token={resetToken}
-        onSignedIn={(u) => { clearUrlHash(); setResetToken(null); setUser(u); }}
+        onSignedIn={(u) => { clearUrlHash(); setResetToken(null); signedIn(u); }}
         onNewLink={(email) => { clearUrlHash(); setResetToken(null); setAuthStart({ mode: "forgot", email: email || "" }); }}
       />
     );
@@ -104,8 +111,13 @@ export default function App() {
   // Still asking the server who's signed in: nothing yet, so the page doesn't flash the wrong screen.
   if (user === undefined) return <div className="app booting" aria-busy="true" />;
   if (!user) {
-    return <Auth key={authStart ? "forgot" : "start"} onSignedIn={(u) => { setAuthStart(null); setUser(u); }}
+    return <Auth key={authStart ? "forgot" : "start"} onSignedIn={(u) => { setAuthStart(null); signedIn(u); }}
       startMode={authStart?.mode || (startsOnSignUp() ? "up" : "in")} startEmail={authStart?.email} />;
+  }
+
+  // The Terms changed since this account agreed: read them and agree again before going on.
+  if (user.terms_current === false) {
+    return <TermsGate onAccepted={() => setUser({ ...user, terms_current: true })} onSignedOut={signedOut} />;
   }
 
   return (

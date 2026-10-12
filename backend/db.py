@@ -211,6 +211,9 @@ MIGRATIONS = [
     ("users", "email_verified_at", "TEXT"),
     # The time zone this account last used imy from (e.g. Asia/Manila), for the admin page's map.
     ("users", "tz", "TEXT"),
+    # 1 = recent messages may go to an outside AI service to write a reply (the default, as the privacy
+    # page says); 0 = the account switched that off, so nothing leaves imy (see auth.cloud_ai_allowed).
+    ("users", "cloud_ai", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
 

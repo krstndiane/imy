@@ -78,6 +78,9 @@ export const api = {
   checkReset: (token) => send("POST", "/api/auth/reset/check", { token }),
   resetPassword: (token, password) => send("POST", "/api/auth/reset", { token, password }),
   deleteAccount: (password, confirm) => send("DELETE", "/api/auth/account", { password, confirm }),
+  // The account's own choices. "Download my data" is a plain link to /api/auth/export (a zip), not a call here.
+  setCloudAi: (cloud_ai) => send("PUT", "/api/auth/ai", { cloud_ai }),     // let an outside AI help write replies?
+  acceptTerms: () => send("POST", "/api/auth/accept-terms"),               // agree to the Terms as they stand now
   // A note for the people running imy (shown on the admin page). { kind, rating, message, can_reply, page }
   sendFeedback: (note) => send("POST", "/api/feedback", note),
   // "Someone opened the app today" for the admin page's counts. No cookies; see backend/insights.py.
