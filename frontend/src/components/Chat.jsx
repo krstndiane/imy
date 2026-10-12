@@ -432,7 +432,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
       {find !== null && (
         <div className="find-bar">
           <Icon name="search" />
-          <input autoFocus value={find} placeholder={`Search your chat with ${name}`} onChange={(e) => setFind(e.target.value)} />
+          <input autoFocus value={find} aria-label="Search this chat" placeholder={`Search your chat with ${name}`} onChange={(e) => setFind(e.target.value)} />
           <span className="muted small">{find ? `${shown.length} found` : ""}</span>
           <button className="ic-btn" aria-label="Close search" onClick={() => setFind(null)}><Icon name="close" /></button>
         </div>
@@ -498,7 +498,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
                 {bar === m.id && !m.deleted && (
                   <div className="react-bar" onClick={(e) => e.stopPropagation()}>
                     {[quick, "❤️", "😂", "😮", "🥹", "😡"].filter((e, k, a) => a.indexOf(e) === k).map((e) => (
-                      <button key={e} className={m.reactions?.user === e ? "on" : ""} onClick={() => toggleReaction(m, e)}>{e}</button>
+                      <button key={e} className={m.reactions?.user === e ? "on" : ""} aria-label={`React with ${e}`} aria-pressed={m.reactions?.user === e} onClick={() => toggleReaction(m, e)}>{e}</button>
                     ))}
                     <button className="txt" onClick={() => { setReplyTo(m); setBar(null); field.current?.focus(); }}>Reply</button>
                     {m.role === "user" && <button className="txt" onClick={() => unsend(m)}>Unsend</button>}
@@ -528,7 +528,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
                     </form>
                   ) : (
                     <div className="teach">
-                      <button title={`This sounds like ${name}`} onClick={() => teach(at, m.id, exchange(at).reply)}>👍</button>
+                      <button title={`This sounds like ${name}`} aria-label={`This sounds like ${name}`} onClick={() => teach(at, m.id, exchange(at).reply)}>👍</button>
                       <button title={`Teach imy what ${name} would really say`} onClick={() => { setFixing(m.id); setFixText(""); }}>Fix</button>
                     </div>
                   )

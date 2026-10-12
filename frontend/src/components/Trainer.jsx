@@ -243,7 +243,7 @@ export function Deck({ cards, answers, setAnswers, personName, onSave, onFinish,
         <div className="ask">
           <span className="ask-avatar" aria-hidden="true">imy</span>
           <div>
-            <p className="ask-text">
+            <p className="ask-text" id="ask-text">
               {card.type === "reply" ? `What would ${name} reply?` : card.type === "guess" ? `${card.text}. Right?` : card.text}
             </p>
             {card.hint && <p className="hint">{card.hint}</p>}
@@ -258,30 +258,30 @@ export function Deck({ cards, answers, setAnswers, personName, onSave, onFinish,
         )}
         {card.type === "choice" && (
           <>
-            <div className="chips" role="radiogroup">
+            <div className="chips" role="radiogroup" aria-labelledby="ask-text">
               {card.options.map((o) => (
                 <button key={o} role="radio" aria-checked={value === o} className={"chip" + (value === o ? " on" : "")} onClick={() => pick(o)}>{o}</button>
               ))}
             </div>
             {card.other && (
-              <input className="answer" ref={input} placeholder="Something else…" onKeyDown={enter}
+              <input className="answer" aria-labelledby="ask-text" ref={input} placeholder="Something else…" onKeyDown={enter}
                 value={card.options.includes(value) ? "" : value} onChange={(e) => set(card.id, e.target.value)} />
             )}
           </>
         )}
         {card.type === "short" && (
-          <input className="answer" ref={input} value={value} placeholder={card.placeholder || "Type your answer"}
+          <input className="answer" aria-labelledby="ask-text" ref={input} value={value} placeholder={card.placeholder || "Type your answer"}
             onChange={(e) => set(card.id, e.target.value)} onKeyDown={enter} />
         )}
         {card.type === "reply" && (
           <>
-            <textarea className="answer" ref={input} rows={2} value={value} placeholder={`Type it the way ${name} would`}
+            <textarea className="answer" aria-labelledby="ask-text" ref={input} rows={2} value={value} placeholder={`Type it the way ${name} would`}
               onChange={(e) => set(card.id, e.target.value)} onKeyDown={enter} />
             <p className="hint">Shift+Enter puts a second message on a new line. imy will use this when you text something like it.</p>
           </>
         )}
         {card.type === "long" && (
-          <textarea className="answer" ref={input} rows={7} value={value} onChange={(e) => set(card.id, e.target.value)} />
+          <textarea className="answer" aria-labelledby="ask-text" ref={input} rows={7} value={value} onChange={(e) => set(card.id, e.target.value)} />
         )}
       </div>
 
@@ -413,7 +413,7 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
           <span className="q">Their name as it appears in the chat</span>
           <input value={pasteName} onChange={(e) => setPasteName(e.target.value)} placeholder={personName} />
         </label>
-        <textarea rows={7} value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"Mia: where are you\nMe: omw!"} />
+        <textarea rows={7} aria-label="Pasted chat text" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"Mia: where are you\nMe: omw!"} />
         <div className="actions">
           <button className="btn" disabled={!pasted.trim()} onClick={importText}>Import text</button>
           {pasteMsg && <span className="muted small">{pasteMsg}</span>}
@@ -502,7 +502,7 @@ function ExportImport({ pid, personName, onImported }) {
       {found && found.conversations.length > 1 && (
         <>
           <p className="small" style={{ marginTop: 14 }}><strong>{found.conversations.length} chats</strong> in this file. Which one is with {personName}?</p>
-          {found.conversations.length > 8 && <input placeholder="Search by name" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+          {found.conversations.length > 8 && <input aria-label="Search by name" placeholder="Search by name" value={filter} onChange={(e) => setFilter(e.target.value)} />}
           <ul className="chat-list">
             {list.map((c) => (
               <li key={c.id}>

@@ -74,7 +74,7 @@ export default function ResetPassword({ token, onSignedIn, onNewLink }) {
                   <input type={show ? "text" : "password"} value={password} required minLength={8} autoFocus
                     autoComplete="new-password" placeholder="at least 8 characters"
                     onChange={(e) => setPassword(e.target.value)} />
-                  <button type="button" className="btn small ghost" onClick={() => setShow(!show)}>
+                  <button type="button" className="btn small ghost" aria-label={show ? "Hide password" : "Show password"} onClick={() => setShow(!show)}>
                     {show ? "Hide" : "Show"}
                   </button>
                 </span>

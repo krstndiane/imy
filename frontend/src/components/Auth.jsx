@@ -110,7 +110,7 @@ export default function Auth({ onSignedIn, startMode = "in", startEmail = "" }) 
                       autoComplete={making ? "new-password" : "current-password"}
                       placeholder={making ? "at least 8 characters" : ""}
                       onChange={(e) => setPassword(e.target.value)} />
-                    <button type="button" className="btn small ghost" onClick={() => setShow(!show)}>
+                    <button type="button" className="btn small ghost" aria-label={show ? "Hide password" : "Show password"} onClick={() => setShow(!show)}>
                       {show ? "Hide" : "Show"}
                     </button>
                   </span>
