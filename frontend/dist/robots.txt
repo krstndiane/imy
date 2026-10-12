@@ -1,0 +1,10 @@
+# imy. The homepage and the two legal pages are for everyone; the app and the admin page are not.
+User-agent: *
+Allow: /$
+Allow: /landing.html
+Allow: /privacy.html
+Allow: /terms.html
+Disallow: /app
+Disallow: /admin
+Disallow: /api/
+Disallow: /uploads/

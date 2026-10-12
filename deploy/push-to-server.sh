@@ -16,7 +16,8 @@ SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30
 
 files=()
 while IFS= read -r -d '' f; do
-  [ -e "$f" ] && files+=("$f")             # skip files deleted here but still in git's list
+  case "$f" in _to_delete/*) continue;; esac  # old builds set aside for deleting
+  [ -e "$f" ] && files+=("$f")               # skip files deleted here but still in git's list
 done < <(git ls-files -z --cached --others --exclude-standard)
 for f in "${files[@]}"; do
   case "$f" in .env|data/*) echo "Refusing to send $f"; exit 1;; esac   # belt and braces

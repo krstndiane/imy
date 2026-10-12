@@ -372,6 +372,13 @@ the newest one opens, free disk, test-looking accounts, the daily AI limit, Gemi
   Keep that to you; use two-factor sign-in on the host, GitHub and Groq.
 - **Deletion requests by email:** `python -m backend.admin remove their@email` shows what would go,
   add `--yes` to delete it (the same as "Delete everything" in the app). Make a backup first.
+- **Launching:** [deploy/LAUNCH.md](deploy/LAUNCH.md) is the tick-off list for the things only you
+  can do — the Gmail App Password, the Groq key, testing on a real phone, the link preview, uptime
+  alerts, backups and the Data Privacy Act.
+- **Keep a copy of the backups off the server:** `bash deploy/get-backup.sh ubuntu@SERVER_IP key.key`
+  makes a fresh backup on the server, downloads it to `~/imy-backups` and checks it opens. The
+  server's own daily backups sit on the same disk, so they don't save you from losing the server.
+  Once a week is plenty; put the downloaded zip in an iCloud or Google Drive folder too.
 - **The admin page:** open `/admin` (e.g. http://localhost:8000/admin) and type an admin email
   (`IMY_ADMIN_EMAILS`, or `IMY_CONTACT_EMAIL` if that's not set). imy emails a one-time sign-in link; on
   your own computer it's also printed in the Terminal. The page shows who's using imy right now, active
@@ -390,3 +397,8 @@ the newest one opens, free disk, test-looking accounts, the daily AI limit, Gemi
 - **OCR can't read emojis** and can misread stylised fonts, so use a chat export file for emoji-heavy chats.
 - **Speaker detection is heuristic** (bubble side and colour, names above messages). Unusual themes may need corrections in Review.
 - The page loads two Google Fonts from the internet, and the optional sentence-transformers model is downloaded once from Hugging Face.
+
+## License
+
+Copyright © 2026 Kristina Diane Aviles / PDYN Technologies. All rights reserved — see
+[LICENSE](LICENSE). The code is here to be read, not reused; ask first at pdyntechnology@gmail.com.

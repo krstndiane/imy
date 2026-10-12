@@ -4,22 +4,31 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>IMY — Miss mo na?</title>
+  <meta name="description" content="A safer place for the message you almost sent. imy learns how someone writes from your old chats, so you can say it without sending it." />
+  <link rel="canonical" href="{{SITE_URL}}" />
+  <meta name="theme-color" content="#0a0a0c" />
+  <!-- the card Facebook, Messenger, iMessage and the rest show when someone shares a link -->
+  <meta property="og:site_name" content="IMY" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="IMY — Miss mo na?" />
+  <meta property="og:description" content="A safer place for the message you almost sent. imy learns how someone writes from your old chats, so you can say it without sending it." />
+  <meta property="og:url" content="{{SITE_URL}}" />
+  <meta property="og:image" content="{{SITE_URL}}/media/og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="IMY — Miss mo na? A chat that ends with “soo.. i guess this is it?” and “i miss you” typed but not sent." />
+  <meta property="og:locale" content="en_PH" />
+  <meta name="twitter:card" content="summary_large_image" />
+
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/media/favicon-32.png">
   <link rel="apple-touch-icon" href="/media/apple-touch-icon.png">
-  <meta name="description" content="Use IMY to talk to them while still maintaining your self-respect." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: { extend: {
-        fontFamily: { sans: ['Inter', 'SF Pro Display', '-apple-system', 'Segoe UI', 'system-ui', 'sans-serif'] },
-        colors: { ink: '#0a0a0c', brand: { 500: '#3B82F6', 600: '#2563EB', glow: '#0052FF' }, cool: '#94A3B8' },
-      } },
-    };
-  </script>
+  <link rel="preload" href="/media/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/media/fonts.css" />
+  <!-- Tailwind, built once into a file (media/landing.css) instead of compiled in the browser from a
+       CDN: the page stays styled even where that CDN is slow or blocked, and there's no flash of
+       unstyled text. Add a new Tailwind class below and that file has to be rebuilt. -->
+  <link rel="stylesheet" href="/media/landing.css" />
   <style>
     body { background: #0a0a0c; }
     .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
@@ -121,7 +130,7 @@
   <!-- ===== header ===== -->
   <header class="sticky top-0 z-40">
     <div class="glass border-x-0 border-t-0">
-      <nav class="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between gap-4" aria-label="Main">
+      <nav class="mx-auto max-w-6xl px-4 sm:px-5 h-16 flex items-center justify-between gap-3 sm:gap-4" aria-label="Main">
         <a href="#top" class="flex items-center gap-3 shrink-0" aria-label="imy, back to top">
           <!-- logo: dark pill bubble "i miss you" + smiley-plus reaction -->
           <span class="relative inline-flex items-center rounded-full bg-[#1c1c20] border border-white/10 px-3 py-1 text-[11px] font-medium leading-none text-white">
@@ -131,7 +140,12 @@
             </span>
           </span>
         </a>
-        <div class="hidden md:flex items-center gap-8 text-sm text-cool">
+        <!-- made by PDYN Technologies -->
+        <span class="flex items-center gap-2 sm:gap-3 shrink-0 mr-auto -ml-1 sm:ml-0">
+          <span class="w-px h-5 bg-white/15" aria-hidden="true"></span>
+          <img src="/media/pdyn-logo.png" alt="PDYN Technologies" width="96" height="24" class="h-3.5 sm:h-6 w-auto opacity-95">
+        </span>
+        <div class="hidden lg:flex items-center gap-8 text-sm text-cool">
           <a class="hover:text-white transition-colors" href="#features">Features</a>
           <a class="hover:text-white transition-colors" href="#how">How It Works</a>
           <a class="hover:text-white transition-colors" href="/privacy.html">Privacy</a>
@@ -139,18 +153,19 @@
         </div>
         <div class="flex items-center gap-2">
           <a href="/app" data-signin class="hidden sm:inline-block rounded-full px-4 py-2 text-sm font-semibold text-cool hover:text-white transition-colors">Sign in</a>
-          <a href="/app?signup=1" data-start class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-5 py-2 text-sm font-semibold">Start Chatting</a>
-          <button id="menuBtn" class="md:hidden glass rounded-full w-10 h-10 grid place-items-center" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu">
+          <a href="/app?signup=1" data-start class="btn-glow rounded-full bg-brand-600 hover:bg-brand-500 px-4 sm:px-5 py-2 text-sm font-semibold whitespace-nowrap max-[379px]:hidden">Start Chatting</a>
+          <button id="menuBtn" class="lg:hidden glass rounded-full w-9 h-9 sm:w-10 sm:h-10 shrink-0 grid place-items-center" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
           </button>
         </div>
       </nav>
-      <div id="mobileMenu" class="hidden md:hidden px-5 pb-4 text-sm text-cool">
+      <div id="mobileMenu" class="hidden lg:hidden px-5 pb-4 text-sm text-cool">
         <a class="block py-2 hover:text-white" href="#features">Features</a>
         <a class="block py-2 hover:text-white" href="#how">How It Works</a>
         <a class="block py-2 hover:text-white" href="/privacy.html">Privacy</a>
         <a class="block py-2 hover:text-white" href="#faq">FAQ</a>
         <a class="block py-2 hover:text-white" href="/app" data-signin>Sign in</a>
+        <a class="block py-2 font-semibold text-white min-[380px]:hidden" href="/app?signup=1" data-start>Start Chatting</a>
       </div>
     </div>
   </header>
@@ -402,11 +417,11 @@
       <div class="reveal glass rounded-3xl p-8 md:p-12 grid md:grid-cols-[1.2fr_1fr] gap-10 items-center">
         <div>
           <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Your chats stay yours</h2>
-          <p class="mt-4 text-cool leading-relaxed">IMY runs on your own computer. Your conversations, screenshots and answers are stored there, and nothing is ever sent to the person you’re missing.</p>
+          <p class="mt-4 text-cool leading-relaxed">Your conversations, screenshots and answers belong to your account, and only you can open them. Nothing is ever sent to the person you’re missing.</p>
         </div>
         <ul class="space-y-3 text-sm text-cool">
-          <li class="flex gap-3"><span class="text-brand-500">●</span> Stored locally in a single file you can delete any time.</li>
-          <li class="flex gap-3"><span class="text-brand-500">●</span> Optional AI mode sends your data to the AI provider only if you add your own key.</li>
+          <li class="flex gap-3"><span class="text-brand-500">●</span> Only your account can open them — no one else, and never the person you’re missing.</li>
+          <li class="flex gap-3"><span class="text-brand-500">●</span> To write a reply, the recent messages go to our AI provider. Never your email, password or screenshots. <a href="/privacy.html" class="underline hover:text-white">What imy stores</a>.</li>
           <li class="flex gap-3"><span class="text-brand-500">●</span> One click removes a person and everything learned about them.</li>
         </ul>
       </div>
@@ -430,7 +445,7 @@
         </details>
         <details class="reveal glass rounded-2xl px-6 py-4 group">
           <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Does it cost anything? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>
-          <p class="mt-3 text-cool leading-relaxed">No. IMY runs on your own computer for free. An optional AI mode writes more natural replies if you add your own key, and some providers offer free keys.</p>
+          <p class="mt-3 text-cool leading-relaxed">No. IMY is free to use. There’s a daily limit on AI-written replies so everyone gets a fair share; past it, replies still come, written by imy itself from the messages you uploaded.</p>
         </details>
         <details class="reveal glass rounded-2xl px-6 py-4 group">
           <summary class="cursor-pointer font-medium list-none flex justify-between items-center gap-4">Is this a replacement for talking to someone? <span class="text-brand-500 transition-transform group-open:rotate-45 text-xl leading-none">+</span></summary>

@@ -54,7 +54,7 @@ LINK_MINUTES = 15
 SESSION_HOURS = 12
 ONLINE_MINUTES = 5                   # "online now" = did something in the last 5 minutes
 ACTIVE_KEEP_DAYS = 400
-PAGES = ("landing", "app")
+PAGES = ("landing", "app", "admin")   # "admin" only puts a dot on the map; it isn't in the visitor charts
 BOT_RE = re.compile(r"bot|crawl|spider|slurp|preview|monitor|curl|wget|python-requests|headless", re.I)
 
 # The admin making this request (set by the middleware in main.py for /api/admin/... only).

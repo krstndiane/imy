@@ -4,4 +4,3 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
-_to_delete/

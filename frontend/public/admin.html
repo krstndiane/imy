@@ -14,6 +14,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/media/favicon-32.png">
   <link rel="apple-touch-icon" href="/media/apple-touch-icon.png">
+  <link rel="stylesheet" href="/media/fonts.css" />
   <style>
     :root {
       color-scheme: dark;
@@ -435,6 +436,11 @@
       $('gate').classList.add('hidden');
       $('dash').classList.remove('hidden');
       openTab(new URLSearchParams(location.search).get('tab') || 'overview');
+      requestAnimationFrame(() => { if (!mapSize) { sizeMap(); renderMap(); } });   // the world shows straight away
+      // You're on the map too: this page tells imy your time zone, like the homepage and the app do.
+      fetch('/api/visit', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page: 'admin', tz: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })() }) })
+        .catch(() => {}).finally(() => loadPlaces());
       refresh();
       startPolling();
     }
@@ -715,6 +721,7 @@
       const max = Math.max(1, ...shown.map((p) => p[mapMode]));
       spots = shown.map((p, i) => ({ ...p, ...project(p.lat, p.lon), r: dotR(p[mapMode], max), phase: (i * 0.37) % 1 }));
       $('map-empty').classList.toggle('hidden', spots.length > 0);
+      if (!spots.length) $('map-empty').textContent = 'No one yet. Dots appear as people visit.';
       return max;
     }
 
@@ -799,7 +806,14 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden && mapSize) startMap(); });
 
     async function loadPlaces() {
-      try { renderMap(await api('places')); } catch { /* the rest of the page still works */ }
+      try {
+        renderMap(await api('places'));
+      } catch (err) {
+        if (err.message === 'signed out') return;
+        if (!mapSize) sizeMap();
+        renderMap({ places: [] });
+        $('map-empty').textContent = 'Couldn’t load the places. If you just updated imy, restart it (Ctrl+C, then start it again).';
+      }
     }
 
     // ---------------------------------------------------------------- accounts

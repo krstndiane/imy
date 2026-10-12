@@ -177,6 +177,39 @@ def test_privacy_and_terms_show_the_contact_address(monkeypatch):
         assert "{{CONTACT_EMAIL}}" not in body and "hasn't added a contact address" in body
 
 
+
+def test_shared_links_get_a_preview_card_with_the_full_site_address(monkeypatch):
+    """Facebook, Messenger and the rest need the WHOLE address of the picture, not /media/..."""
+    _, main = fresh()
+    monkeypatch.setenv("IMY_PUBLIC_URL", "https://imy.ph")
+    monkeypatch.setenv("IMY_CONTACT_EMAIL", "hello@imy.ph")
+    body = main.spa("", None).body.decode()                      # the homepage
+    assert '<meta property="og:image" content="https://imy.ph/media/og-image.jpg"' in body
+    assert '<meta property="og:url" content="https://imy.ph"' in body
+    assert '<meta name="twitter:card" content="summary_large_image"' in body
+    assert "{{SITE_URL}}" not in body
+    terms = main.terms_page().body.decode()
+    assert '<meta property="og:url" content="https://imy.ph/terms.html"' in terms
+    # the address comes from a setting, so it can't be bent by whoever is visiting
+    monkeypatch.setenv("IMY_PUBLIC_URL", 'https://imy.ph/"><script>alert(1)</script>')
+    assert "<script>alert(1)" not in main.spa("", None).body.decode()
+
+
+def test_the_homepage_does_not_promise_it_runs_on_your_own_computer():
+    """It did when imy was a laptop app. Hosted, that would be a false privacy promise."""
+    _, main = fresh()
+    body = main.spa("", None).body.decode().lower()
+    for claim in ("runs on your own computer", "stored locally", "add your own key"):
+        assert claim not in body, claim
+
+
+def test_the_app_and_the_admin_page_ask_not_to_be_listed_in_search():
+    _, main = fresh()
+    robots = (main.FRONTEND_DIST / "robots.txt").read_text()
+    assert "Disallow: /app" in robots and "Disallow: /admin" in robots
+    assert 'content="noindex, nofollow"' in (main.FRONTEND_DIST / "admin.html").read_text()
+
+
 # ---------------------------------------------------------------- admin tool
 def test_admin_remove_previews_then_deletes():
     auth, main = fresh()

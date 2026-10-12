@@ -1588,7 +1588,7 @@ def feedback_inbox() -> list[str]:
 
 
 class VisitIn(BaseModel):
-    page: str = ""              # landing | app
+    page: str = ""              # landing | app | admin
     tz: str = ""                # the browser's time zone (e.g. Asia/Manila): roughly where, for the admin map
 
 
@@ -1723,36 +1723,41 @@ def admin_feedback_delete(fid: int):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------- privacy + terms pages
-# Both are plain HTML files in frontend/public (copied to dist when the site is built). They say
-# {{CONTACT_EMAIL}} wherever your contact address goes, and it's filled in here from IMY_CONTACT_EMAIL,
-# so the address lives in your settings instead of being typed into the pages and rebuilt.
-LEGAL_PAGES = {"privacy.html", "terms.html"}
+# ---------------------------------------------------------------- the plain HTML pages
+# The homepage, privacy and terms are plain HTML files in frontend/public (copied to dist when the
+# site is built). Two things in them come from your settings rather than being typed in and rebuilt:
+#   {{CONTACT_EMAIL}}  your contact address (IMY_CONTACT_EMAIL)
+#   {{SITE_URL}}       the site's own address (IMY_PUBLIC_URL), needed in full by Facebook, Messenger
+#                      and the rest when they show a preview card for a shared link
+SETTINGS_PAGES = {"privacy.html", "terms.html", "landing.html"}
 
 
 def contact_email() -> str:
     return os.environ.get("IMY_CONTACT_EMAIL", "").strip()
 
 
-def _legal_page(name: str):
+def _settings_page(name: str, request: Request | None = None):
     for folder in (FRONTEND_DIST, ROOT / "frontend" / "public"):
         f = folder / name
         if f.is_file():
             email = contact_email()
             link = (f'<a href="mailto:{html.escape(email)}">{html.escape(email)}</a>' if email
                     else "<em>(the person running this site hasn't added a contact address yet)</em>")
-            return HTMLResponse(f.read_text(encoding="utf-8").replace("{{CONTACT_EMAIL}}", link))
+            site = html.escape(mailer.site_url(request), quote=True)
+            return HTMLResponse(f.read_text(encoding="utf-8")
+                                .replace("{{CONTACT_EMAIL}}", link)
+                                .replace("{{SITE_URL}}", site))
     raise HTTPException(404, "Not found")
 
 
 @app.get("/privacy.html")
-def privacy_page():
-    return _legal_page("privacy.html")
+def privacy_page(request: Request = None):
+    return _settings_page("privacy.html", request)
 
 
 @app.get("/terms.html")
-def terms_page():
-    return _legal_page("terms.html")
+def terms_page(request: Request = None):
+    return _settings_page("terms.html", request)
 
 
 # ---------------------------------------------------------------- serve the built frontend (optional)
@@ -1761,7 +1766,7 @@ if FRONTEND_DIST.exists():
     _DIST = FRONTEND_DIST.resolve()
 
     @app.get("/{path:path}")
-    def spa(path: str):
+    def spa(path: str, request: Request = None):
         """The landing page at the main address; the app itself at /app (its screens all live in the one
         page, so /app/anything is the app too); and the files the pages use (/media/..., /privacy.html...)."""
         if path.startswith("api/"):
@@ -1770,9 +1775,12 @@ if FRONTEND_DIST.exists():
             return FileResponse(FRONTEND_DIST / "index.html")
         if path in ("admin", "admin/") and (FRONTEND_DIST / "admin.html").is_file():
             return FileResponse(FRONTEND_DIST / "admin.html")
+        if path in SETTINGS_PAGES:                              # has {{CONTACT_EMAIL}} / {{SITE_URL}} in it
+            return _settings_page(path, request)
         target = (FRONTEND_DIST / path).resolve()
         inside = target == _DIST or _DIST in target.parents     # never serve files outside frontend/dist
         if path and inside and target.is_file():
             return FileResponse(target)
-        landing = FRONTEND_DIST / "landing.html"
-        return FileResponse(landing if landing.is_file() else FRONTEND_DIST / "index.html")
+        if (FRONTEND_DIST / "landing.html").is_file():
+            return _settings_page("landing.html", request)
+        return FileResponse(FRONTEND_DIST / "index.html")
