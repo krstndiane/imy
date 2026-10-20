@@ -200,6 +200,21 @@ textarea { resize: vertical; }
 .chat-list { list-style: none; padding: 0; margin: 10px 0; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .chat-list button { width: 100%; display: flex; justify-content: space-between; gap: 12px; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
 .chat-list button.picked { border-color: var(--accent); background: var(--accent-wash); }
+.privacy-note { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 12px 16px; margin: 0 0 18px; background: var(--accent-wash); }
+.privacy-note p { margin: 0; }
+.privacy-note p + p { margin-top: 6px; }
+.talk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0; }
+.talk-tools label { display: inline-flex; align-items: center; }
+.talk-tools input[type="date"] { width: auto; margin-left: 6px; border: 1px solid var(--line); background: var(--panel); color: inherit; border-radius: 8px; padding: 5px 8px; font: inherit; }
+.talk-tools .grow { flex: 1; }
+.talk-links { display: inline-flex; gap: 14px; white-space: nowrap; }
+.talk-list { list-style: none; padding: 0; margin: 6px 0 10px; max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.talk { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+.talk.on { border-color: var(--accent); background: var(--accent-wash); }
+.talk input { width: auto; flex: none; margin-top: 3px; padding: 0; accent-color: var(--accent); }
+.talk-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.talk-body .tag { align-self: flex-start; margin-top: 2px; }
+.talk-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .who-pick select { width: 100%; border: 1px solid var(--line); background: var(--panel); color: inherit; border-radius: 10px; padding: 9px 12px; font: inherit; }
 @media (max-width: 600px) { .who-pick { grid-template-columns: 1fr; } }

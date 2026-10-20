@@ -105,7 +105,9 @@ export const api = {
   importText: (id, text, person_name) => send("POST", `/api/persons/${id}/import-text`, { text, person_name }),
   // Chat export files: step 1 reads the file and lists the chats in it, step 2 saves the one you pick.
   importFile: (id, file) => form(`/api/persons/${id}/import-file`, { file }, 300000),
-  importCommit: (id, body) => send("POST", `/api/persons/${id}/import-commit`, body, 120000),
+  // Between the two: the talks in the picked chat, so you choose which parts imy learns from (nothing saved).
+  importPreview: (id, body) => send("POST", `/api/persons/${id}/import-preview`, body, 120000),
+  importCommit: (id, body) => send("POST", `/api/persons/${id}/import-commit`, body, 120000),   // body.talks = the parts you ticked
   flipScreenshot: (sid) => send("POST", `/api/screenshots/${sid}/flip`),
   reread: (sid) => send("POST", `/api/screenshots/${sid}/reread`, null, 180000),   // read a screenshot again with the latest reader
   deleteScreenshot: (sid) => send("DELETE", `/api/screenshots/${sid}`),

@@ -336,7 +336,7 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
         const m = shot.meta || {};
         update({ status: "done", count: (shot.messages || []).length, duplicate: shot.duplicate, skipped: shot.overlap_skipped,
                  app: m.platform && m.platform !== "unknown" ? (PLATFORMS.find((p) => p.id === m.platform)?.label || m.platform) : "",
-                 mode: m.mode, title: m.title, warning: shot.warning });
+                 mode: m.mode, title: m.title, warning: shot.warning, hidden: shot.hidden });
       } catch (e) {
         update({ status: "error", msg: e.message });
       }
@@ -351,7 +351,7 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
       const shot = await api.importText(pid, pasted, pasteName);
       onAdded([shot]);
       setPasted("");
-      setPasteMsg(`Imported ${shot.messages.length} messages.`);
+      setPasteMsg(`Imported ${shot.messages.length} messages.` + (shot.hidden ? ` Private details hidden: ${shot.hidden}.` : ""));
     } catch (e) { setPasteMsg(e.message); }
   }
 
@@ -361,6 +361,17 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
         <strong>{theirs}</strong> of {personName === "them" ? "their" : `${personName}’s`} messages so far
         <span className="muted"> · {theirs >= GOAL ? "that’s plenty, and more still helps" : "no limit: the more you add, the closer the replies"}</span>
         <div className="bar"><div style={{ width: Math.min(100, (theirs / GOAL) * 100) + "%" }} /></div>
+      </div>
+
+      <div className="privacy-note">
+        <p>
+          <strong>You choose what imy learns from.</strong> imy never connects to Messenger, Instagram or any other
+          account, and never asks for their passwords. You upload only the chats, and the parts of chats, you want it to learn from.
+        </p>
+        <p className="small muted">
+          Passwords, one-time codes, card and account numbers, ID numbers, phone numbers and email addresses are hidden
+          automatically before anything is saved. It can miss things, so check Review and remove anything else private.
+        </p>
       </div>
 
       <ExportImport pid={pid} personName={personName} onImported={onImported} />
@@ -396,6 +407,11 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
                   `${q.count} message${q.count === 1 ? "" : "s"} found` + (q.skipped ? ` · ${q.skipped} already in another screenshot` : "")
                   + (q.app ? ` · ${q.app}${q.mode ? `, ${q.mode}` : ""}` : ""))}
                 {q.status === "done" && q.warning && <em className="queue-warn">{q.warning}</em>}
+                {q.status === "done" && q.hidden && (
+                  <em className="queue-warn">
+                    Hid {q.hidden} from the text. The picture still shows it, so remove this screenshot in Review if you don’t want it kept.
+                  </em>
+                )}
                 {q.status === "error" && q.msg}
               </span>
             </li>
@@ -428,7 +444,8 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
 /* ---------- Chat export import (WhatsApp / Messenger / Instagram / Telegram) ----------
    1. you pick the file you downloaded from the app
    2. the server lists the chats inside it; you pick one
-   3. you say which sender is them and which is you, then Import */
+   3. you say which sender is them and which is you
+   4. you choose which parts (talks) imy learns from, then Import */
 const HOW_TO = [
   { app: "WhatsApp", steps: ["Open the chat with them", "Tap their name (iPhone) or ⋮ > More (Android)", "Export chat > Without media", "Save or AirDrop the file to this Mac, then choose it here (.zip or .txt)"] },
   { app: "Messenger", steps: ["Go to facebook.com/dyi > Download or transfer information", "Specific types of information > Messages", "Download to device, Format: JSON (HTML also works), Date range: All time", "When Facebook says it's ready, download the .zip and choose it here",
@@ -447,14 +464,17 @@ function ExportImport({ pid, personName, onImported }) {
   const [me, setMe] = useState("");
   const [filter, setFilter] = useState("");
   const [msg, setMsg] = useState("");
+  const [parts, setParts] = useState(null);      // import-preview reply: { talks, hidden }
+  const [picked, setPicked] = useState(new Set());
   const input = useRef();
 
   const chat = found?.conversations.find((c) => c.id === chatId);
-  const pick = (c) => { setChatId(c.id); setThem(c.guess_person || ""); setMe(c.guess_me || ""); };
+  const pick = (c) => { setChatId(c.id); setThem(c.guess_person || ""); setMe(c.guess_me || ""); setParts(null); };
+  const choice = () => ({ token: found.token, conversation_id: chatId, person_name: them, me_name: me });
 
   async function read(file) {
     if (!file) return;
-    setBusy("reading"); setMsg(""); setFound(null); setChatId(null);
+    setBusy("reading"); setMsg(""); setFound(null); setChatId(null); setParts(null);
     try {
       const res = await api.importFile(pid, file);
       setFound(res);
@@ -465,12 +485,23 @@ function ExportImport({ pid, personName, onImported }) {
     finally { setBusy(""); }
   }
 
+  async function showParts() {
+    setBusy("parts"); setMsg("");
+    try {
+      const r = await api.importPreview(pid, choice());
+      setParts(r);
+      setPicked(new Set(r.talks.map((t) => t.index)));   // all ticked to start; untick what imy shouldn't learn
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(""); }
+  }
+
   async function save() {
     setBusy("saving"); setMsg("");
     try {
-      const r = await api.importCommit(pid, { token: found.token, conversation_id: chatId, person_name: them, me_name: me });
-      setMsg(`Added ${r.person_messages} messages from ${personName} and ${r.user_messages} from you, as ${r.sessions} separate talk${r.sessions === 1 ? "" : "s"}.`);
-      setFound(null); setChatId(null);
+      const r = await api.importCommit(pid, { ...choice(), talks: [...picked].sort((a, b) => a - b) });
+      setMsg(`Added ${r.person_messages} messages from ${personName} and ${r.user_messages} from you, as ${r.sessions} separate talk${r.sessions === 1 ? "" : "s"}.`
+        + (r.hidden ? ` Private details hidden: ${r.hidden}.` : ""));
+      setFound(null); setChatId(null); setParts(null);
       onImported?.();
     } catch (e) { setMsg(e.message); }
     finally { setBusy(""); }
@@ -484,7 +515,7 @@ function ExportImport({ pid, personName, onImported }) {
       <h3>Upload your conversation <span className="tag">best</span></h3>
       <p className="muted small">
         Download your chat with them from the app, then upload the file here. imy gets every message exactly as
-        written, emojis included, and you pick which conversation to use. It stays on this computer.
+        written, emojis included, and you pick which conversation, and which parts of it, to use.
       </p>
       <details className="how">
         <summary>How do I download my conversation?</summary>
@@ -525,26 +556,104 @@ function ExportImport({ pid, personName, onImported }) {
           <div className="who-pick">
             <label className="field">
               <span className="q">Which one is {personName}?</span>
-              <select value={them} onChange={(e) => setThem(e.target.value)}>
+              <select value={them} onChange={(e) => { setThem(e.target.value); setParts(null); }}>
                 <option value="">Choose…</option>
                 {chat.participants.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.count})</option>)}
               </select>
             </label>
             <label className="field">
               <span className="q">Which one is you?</span>
-              <select value={me} onChange={(e) => setMe(e.target.value)}>
+              <select value={me} onChange={(e) => { setMe(e.target.value); setParts(null); }}>
                 <option value="">Choose…</option>
                 {chat.participants.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.count})</option>)}
               </select>
             </label>
           </div>
-          <div className="actions" style={{ marginTop: 4 }}>
-            <button className="btn primary" disabled={!!busy || !them || !me || them === me} onClick={save}>
-              {busy === "saving" ? "Uploading…" : "Use this conversation"}
-            </button>
-          </div>
+          {!parts && (
+            <div className="actions" style={{ marginTop: 4 }}>
+              <button className="btn primary" disabled={!!busy || !them || !me || them === me} onClick={showParts}>
+                {busy === "parts" ? "Opening…" : "Next: choose which parts"}
+              </button>
+            </div>
+          )}
         </>
       )}
+
+      {chat && parts && (
+        <TalkPicker talks={parts.talks} hidden={parts.hidden} picked={picked} setPicked={setPicked}
+          personName={personName} day={day}
+          footer={
+            <button className="btn primary" disabled={!!busy || picked.size === 0} onClick={save}>
+              {busy === "saving" ? "Uploading…" : `Use ${picked.size} of ${parts.talks.length} part${parts.talks.length === 1 ? "" : "s"}`}
+            </button>
+          } />
+      )}
+    </div>
+  );
+}
+
+/* Which parts of a chat imy learns from. The chat is cut into talks (a new one after a few hours of
+   quiet, see importers.split_sessions), so you can leave out an argument, someone else's business, or
+   anything you'd rather imy didn't know. Everything starts ticked; a date range ticks just those days. */
+function TalkPicker({ talks, hidden, picked, setPicked, personName, day, footer }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const dated = talks.some((t) => t.first);
+  const ymd = (ts) => new Date(ts * 1000).toLocaleDateString("en-CA");   // 2026-10-21, in your own time zone
+  const when = (t) => (day(t.first) === day(t.last) ? day(t.first) : `${day(t.first)} to ${day(t.last)}`);
+  const toggle = (i) => setPicked((p) => { const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  function range(f, t) {
+    setFrom(f); setTo(t);
+    setPicked(new Set(talks.filter((x) => !x.first || ((!f || ymd(x.last) >= f) && (!t || ymd(x.first) <= t))).map((x) => x.index)));
+  }
+  const theirs = talks.reduce((n, t) => n + (picked.has(t.index) ? t.person_messages : 0), 0);
+  const name = personName === "them" ? "them" : personName;
+
+  return (
+    <div className="talks">
+      <p className="small" style={{ marginTop: 14 }}><strong>Which parts should imy learn from?</strong></p>
+      <p className="muted small">
+        This chat has {talks.length} part{talks.length === 1 ? "" : "s"} (a new one starts after a few hours of quiet).
+        Untick anything you’d rather imy didn’t learn from, like an argument, someone else’s business, or anything private.
+      </p>
+      {hidden && (
+        <div className="banner" role="status">
+          <strong>Private details found:</strong> {hidden}. Each one is replaced with a marker like [password hidden]
+          before anything is saved, so imy won’t learn or repeat it.
+        </div>
+      )}
+      <div className="talk-tools">
+        {dated && talks.length > 1 && (
+          <>
+            <label className="small">From <input type="date" value={from} onChange={(e) => range(e.target.value, to)} /></label>
+            <label className="small">To <input type="date" value={to} onChange={(e) => range(from, e.target.value)} /></label>
+          </>
+        )}
+        <span className="grow" />
+        <span className="talk-links">
+          <button className="link" onClick={() => range("", "")}>Select all</button>
+          <button className="link" onClick={() => setPicked(new Set())}>Clear</button>
+        </span>
+      </div>
+      <ul className="talk-list">
+        {talks.map((t) => (
+          <li key={t.index}>
+            <label className={"talk" + (picked.has(t.index) ? " on" : "")}>
+              <input type="checkbox" checked={picked.has(t.index)} onChange={() => toggle(t.index)} />
+              <span className="talk-body">
+                <span className="small">
+                  <strong>{t.first ? when(t) : `Part ${t.index + 1}`}</strong>
+                  {" · "}{t.messages} message{t.messages === 1 ? "" : "s"}, {t.person_messages} from {name}
+                </span>
+                <span className="muted small talk-preview">“{t.preview}”</span>
+                {t.hidden && <span className="tag warn">hides {t.hidden}</span>}
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <p className="small muted" role="status">{picked.size} of {talks.length} picked · {theirs} of {name === "them" ? "their" : `${name}’s`} messages</p>
+      <div className="actions">{footer}</div>
     </div>
   );
 }
@@ -559,6 +668,8 @@ export function Review({ shots, flagged, personName, reload, footer }) {
   const [redo, setRedo] = useState(null);      // reading every screenshot again: { done, total, failed }
   const folded = (s) => !s.url && s.messages.length > COLLAPSE_OVER && !open.has(s.id);
   const images = shots.filter((s) => s.url);
+  const withHidden = shots.filter((s) => s.hidden);
+  const pictures = withHidden.filter((s) => s.url);   // the text is cleaned, the picture can't be
 
   async function rereadAll() {
     if (!confirm(`Read all ${images.length} screenshots again with imy's newest reader? Edits you made to their messages will be replaced.`)) return;
@@ -577,6 +688,14 @@ export function Review({ shots, flagged, personName, reload, footer }) {
         {total} messages read from {shots.length} item{shots.length === 1 ? "" : "s"}. Check that each message is attributed to the right person.
         Tap a name to switch speaker, edit text directly, or remove anything that isn’t a message.
       </p>
+      {withHidden.length > 0 && (
+        <div className="banner" role="status">
+          <strong>Private details hidden.</strong> In {withHidden.length} item{withHidden.length === 1 ? "" : "s"}, imy replaced
+          passwords, codes, account numbers and similar details with markers like [password hidden], so it won’t learn or repeat them.
+          {pictures.length > 0 && <> {pictures.length === 1 ? "1 screenshot still shows" : `${pictures.length} screenshots still show`} them
+            in the picture itself. Remove {pictures.length === 1 ? "it" : "them"} below if you don’t want the picture kept.</>}
+        </div>
+      )}
       {images.length > 1 && (
         <p className="small">
           {redo && redo.done < redo.total ? `Reading again… ${redo.done} of ${redo.total}`
@@ -593,6 +712,8 @@ export function Review({ shots, flagged, personName, reload, footer }) {
             {s.meta?.title && s.url && <span className="tag">chat: {s.meta.title}</span>}
             {s.meta?.group && <span className="tag">group chat</span>}
             {flagged.has(s.id) && <span className="tag warn">Couldn’t match names, check the speakers</span>}
+            {s.hidden && <span className="tag warn" title={`Hidden from the text imy learns from: ${s.hidden}`}>
+              {s.url ? "private details, still in the picture" : "private details hidden"}</span>}
             <span className="grow" />
             {s.url && <button className="btn small" title="Read this screenshot again with imy's latest reader"
               onClick={act(() => api.reread(s.id))}>Read again</button>}

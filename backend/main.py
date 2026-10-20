@@ -19,7 +19,7 @@ import threading
 import time
 import traceback
 import uuid
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from . import account_export, auth, backup, claude, engine, importers, insights, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
 from . import feedback as feedback_mod
+from . import sensitive
 from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +48,7 @@ Image.MAX_IMAGE_PIXELS = 60_000_000          # refuse absurd images (a "decompre
 @asynccontextmanager
 async def lifespan(_app):
     init_db()
+    sensitive.hide_existing()                # once: hide passwords etc. in chats saved before that check existed
     auth.sweep_sessions()                    # drop sign-ins that ran out while imy was off
     auth.start_sweeper()                     # and keep doing it while it runs
     insights.sweep()                         # yesterday's visit codes, old admin links (see insights.py)
@@ -596,10 +598,14 @@ def _person_for_engine(conn, pid: int) -> dict:
     return person
 
 
-def _store_messages(conn, pid: int, shot_id: int, msgs: list[dict]) -> None:
+def _store_messages(conn, pid: int, shot_id: int, msgs: list[dict]) -> Counter:
+    """Save messages for one item. Every way of adding chats ends here, so this is where private
+    details (passwords, codes, account and card numbers...) are hidden. Returns what was hidden."""
+    msgs, hidden = sensitive.mask_messages(msgs)
     conn.executemany(
         "INSERT INTO messages (person_id, screenshot_id, position, speaker, text) VALUES (?,?,?,?,?)",
         [(pid, shot_id, i, m["speaker"], m["text"]) for i, m in enumerate(msgs)])
+    return hidden
 
 
 def _shot_out(conn, shot) -> dict:
@@ -612,6 +618,8 @@ def _shot_out(conn, shot) -> dict:
         "url": f"/uploads/{shot['stored_path']}" if shot["stored_path"] else None,
         "messages": [dict(m) for m in msgs],
         "meta": {k: meta[k] for k in ("platform", "confidence", "mode", "title", "group", "senders") if k in meta},
+        # what was hidden from this item, in words ("1 password and 1 phone number"); "" = nothing
+        "hidden": sensitive.describe(meta.get("sensitive")),
     }
 
 
@@ -908,6 +916,19 @@ def _warning(meta: dict, names: list[str]) -> str:
     return ""
 
 
+def _hide_in_reading(parsed: dict, meta: dict) -> tuple[list[dict], str]:
+    """Hide private details in what was read from a screenshot (its messages and the full text), and
+    note in `meta` what the picture shows - the image itself can't be changed, so Review says so."""
+    msgs, hidden = sensitive.mask_messages(parsed["messages"])
+    raw_text, raw_hidden = sensitive.mask(parsed.get("raw_text") or "")
+    hidden = hidden | raw_hidden          # the same password is usually in both: count it once
+    if hidden:
+        meta["sensitive"] = dict(hidden)
+    else:
+        meta.pop("sensitive", None)
+    return msgs, raw_text
+
+
 def _process_image(pid: int, f: UploadFile) -> dict:
     """Save, recognise and store ONE screenshot. Raises HTTPException with a friendly message on failure."""
     ext = Path(f.filename or "").suffix.lower()
@@ -946,13 +967,14 @@ def _process_image(pid: int, f: UploadFile) -> dict:
         print(f"[imy] couldn't read {f.filename}:\n{traceback.format_exc()}")
         raise HTTPException(422, f"{f.filename}: imy couldn't read this screenshot. Try a clearer, uncropped one.")
     meta = parsed.get("meta") or {"platform": parsed["platform"]}
+    found, raw_text = _hide_in_reading(parsed, meta)
     with db() as conn:
         # Screenshots taken while scrolling overlap: skip messages another screenshot already has.
-        msgs, skipped = parser.trim_overlap(parsed["messages"], _other_shot_messages(conn, pid))
+        msgs, skipped = parser.trim_overlap(found, _other_shot_messages(conn, pid))
         cur = conn.execute(
             "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at, meta, sha1) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (pid, f.filename, f"{pid}/{dest.name}", parsed["platform"], parsed["raw_text"], now(), json.dumps(meta), digest))
+            (pid, f.filename, f"{pid}/{dest.name}", parsed["platform"], raw_text, now(), json.dumps(meta), digest))
         _store_messages(conn, pid, cur.lastrowid, msgs)
         bump_version(conn, pid)
         shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -993,11 +1015,12 @@ def reread_screenshot(sid: int):
     names = _known_names(person["answers"])
     parsed = _read_image(Image.open(path), names)
     meta = parsed.get("meta") or {"platform": parsed["platform"]}
+    found, raw_text = _hide_in_reading(parsed, meta)
     with db() as conn:
-        msgs, skipped = parser.trim_overlap(parsed["messages"], _other_shot_messages(conn, shot["person_id"], sid))
+        msgs, skipped = parser.trim_overlap(found, _other_shot_messages(conn, shot["person_id"], sid))
         conn.execute("DELETE FROM messages WHERE screenshot_id = ?", (sid,))
         conn.execute("UPDATE screenshots SET platform = ?, raw_text = ?, flipped = 0, meta = ? WHERE id = ?",
-                     (parsed["platform"], parsed["raw_text"], json.dumps(meta), sid))
+                     (parsed["platform"], raw_text, json.dumps(meta), sid))
         _store_messages(conn, shot["person_id"], sid, msgs)
         bump_version(conn, shot["person_id"])
         out = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (sid,)).fetchone())
@@ -1023,9 +1046,12 @@ def import_text(pid: int, body: TextImportIn):
         msgs, needs_review = parser.parse_text_export(body.text, names)
         if not msgs:
             raise HTTPException(400, "Couldn't find any messages. Use lines like  Name: message  or a WhatsApp export.")
+        raw_text, raw_hidden = sensitive.mask(body.text[:20000])
+        msgs, hidden = sensitive.mask_messages(msgs)
+        meta = {"sensitive": dict(hidden | raw_hidden)} if hidden or raw_hidden else {}
         cur = conn.execute(
-            "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",
-            (pid, "pasted-text", None, "text-import", body.text[:20000], now()))
+            "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at, meta) VALUES (?,?,?,?,?,?,?)",
+            (pid, "pasted-text", None, "text-import", raw_text, now(), json.dumps(meta)))
         _store_messages(conn, pid, cur.lastrowid, msgs)
         bump_version(conn, pid)
         shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -1085,17 +1111,26 @@ def import_file(pid: int, file: UploadFile = File(...), request: Request = None)
     return {"token": token, "filename": file.filename, "conversations": out}
 
 
-class ImportCommitIn(BaseModel):
+class ImportPickIn(BaseModel):
     token: str
     conversation_id: str
     person_name: str        # the sender who is the person you're teaching imy
     me_name: str            # the sender who is you (everyone else in a group chat is skipped)
 
 
-@app.post("/api/persons/{pid}/import-commit")
-def import_commit(pid: int, body: ImportCommitIn):
+class ImportCommitIn(ImportPickIn):
+    # Which talks to keep (their numbers from import-preview). None = all of them. You choose what imy
+    # learns from: an argument, someone else's business, anything you'd rather it didn't know - untick it.
+    talks: list[int] | None = None
+
+
+def _picked_import(pid: int, body: ImportPickIn) -> tuple[dict, list[list[dict]], Path]:
+    """The chat you picked from an uploaded export, cut into talks. Shared by preview and commit, so the
+    talks you tick are exactly the talks that are saved."""
     if not re.fullmatch(r"[0-9a-f]{32}", body.token):
         raise HTTPException(400, "Bad import token.")
+    with db() as conn:
+        _person_row(conn, pid)
     path = IMPORT_DIR / f"{body.token}.json"
     if not path.exists():
         raise HTTPException(410, "That upload expired. Please choose the file again.")
@@ -1108,23 +1143,57 @@ def import_commit(pid: int, body: ImportCommitIn):
     msgs = [{"speaker": roles[s], "text": t, "ts": ts} for s, t, ts in conv["messages"] if s in roles]
     if not any(m["speaker"] == "person" for m in msgs):
         raise HTTPException(400, f"{body.person_name} has no messages in this chat.")
-    sessions = importers.split_sessions(msgs)
+    return conv, importers.split_sessions(msgs), path
+
+
+@app.post("/api/persons/{pid}/import-preview")
+def import_preview(pid: int, body: ImportPickIn):
+    """The talks in the chat you picked, so you can choose which parts imy learns from. Nothing is saved.
+    Each talk says when it was, how long it is, how it starts, and what private details would be hidden."""
+    _, sessions, _ = _picked_import(pid, body)
+    talks, total = [], Counter()
+    for n, chunk in enumerate(sessions):
+        stamps = [m["ts"] for m in chunk if m.get("ts")]
+        masked, hidden = sensitive.mask_messages(chunk)
+        total += hidden
+        start = next((m["text"] for m in masked if m["speaker"] == "person" and m["text"].strip()), masked[0]["text"])
+        talks.append({"index": n, "first": min(stamps) if stamps else None, "last": max(stamps) if stamps else None,
+                      "messages": len(chunk), "person_messages": sum(m["speaker"] == "person" for m in chunk),
+                      "user_messages": sum(m["speaker"] == "user" for m in chunk),
+                      "preview": start[:140], "hidden": sensitive.describe(hidden)})
+    return {"talks": talks, "hidden": sensitive.describe(total)}
+
+
+@app.post("/api/persons/{pid}/import-commit")
+def import_commit(pid: int, body: ImportCommitIn):
+    conv, sessions, path = _picked_import(pid, body)
+    if body.talks is not None:
+        keep = set(body.talks)
+        sessions = [chunk for n, chunk in enumerate(sessions) if n in keep]
+        if not sessions:
+            raise HTTPException(400, "Pick at least one part of the chat for imy to learn from.")
+    msgs = [m for chunk in sessions for m in chunk]
+    if not any(m["speaker"] == "person" for m in msgs):
+        raise HTTPException(400, f"The parts you picked have no messages from {body.person_name}.")
     title = conv["title"] or "Chat export"
+    hidden = Counter()
     with db() as conn:
         row = _person_row(conn, pid)
         for n, chunk in enumerate(sessions, 1):
+            found = sensitive.mask_messages(chunk)[1]
+            meta = {"platform": conv["platform"], "title": title, **({"sensitive": dict(found)} if found else {})}
             cur = conn.execute(
                 "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at, meta) VALUES (?,?,?,?,?,?,?)",
-                (pid, f"{title} · talk {n} of {len(sessions)}", None, conv["platform"], "", now(),
-                 json.dumps({"platform": conv["platform"], "title": title})))
-            _store_messages(conn, pid, cur.lastrowid, chunk)
+                (pid, f"{title} · talk {n} of {len(sessions)}", None, conv["platform"], "", now(), json.dumps(meta)))
+            hidden += _store_messages(conn, pid, cur.lastrowid, chunk)
         if not row["platform"] and conv["platform"] in PLATFORMS:   # nothing chosen yet: look like the app it came from
             conn.execute("UPDATE persons SET platform = ? WHERE id = ?", (conv["platform"], pid))
         bump_version(conn, pid)
     path.unlink(missing_ok=True)
     return {"sessions": len(sessions), "messages": len(msgs),
             "person_messages": sum(m["speaker"] == "person" for m in msgs),
-            "user_messages": sum(m["speaker"] == "user" for m in msgs)}
+            "user_messages": sum(m["speaker"] == "user" for m in msgs),
+            "hidden": sensitive.describe(hidden)}
 
 
 @app.get("/api/persons/{pid}/screenshots")
@@ -1171,11 +1240,12 @@ def edit_message(mid: int, body: MessageEdit):
         m = _owned(conn, "messages", mid, "Message")
         if body.speaker is not None and body.speaker not in ("user", "person"):
             raise HTTPException(400, "speaker must be 'user' or 'person'")
-        conn.execute("UPDATE messages SET text = ?, speaker = ? WHERE id = ?",
-                     (body.text if body.text is not None else m["text"],
-                      body.speaker or m["speaker"], mid))
+        text, hidden = sensitive.mask(body.text) if body.text is not None else (m["text"], Counter())
+        conn.execute("UPDATE messages SET text = ?, speaker = ? WHERE id = ?", (text, body.speaker or m["speaker"], mid))
         bump_version(conn, m["person_id"])
-        return dict(conn.execute("SELECT id, position, speaker, text FROM messages WHERE id = ?", (mid,)).fetchone())
+        out = dict(conn.execute("SELECT id, position, speaker, text FROM messages WHERE id = ?", (mid,)).fetchone())
+        out["hidden"] = sensitive.describe(hidden)
+        return out
 
 
 @app.delete("/api/messages/{mid}")
@@ -1196,7 +1266,8 @@ def merge_message_up(mid: int):
                             (m["screenshot_id"], m["position"])).fetchone()
         if not prev:
             raise HTTPException(400, "There's no message above this one.")
-        conn.execute("UPDATE messages SET text = ? WHERE id = ?", (prev["text"] + " " + m["text"], prev["id"]))
+        joined = sensitive.mask(prev["text"] + " " + m["text"])[0]   # "password ko:" + "Mahal1234" joined
+        conn.execute("UPDATE messages SET text = ? WHERE id = ?", (joined, prev["id"]))
         conn.execute("DELETE FROM messages WHERE id = ?", (mid,))
         bump_version(conn, m["person_id"])
     return {"ok": True}
@@ -1229,6 +1300,7 @@ def upload_media(pid: int, files: list[UploadFile] = File(...), request: Request
             continue
         path = UPLOAD_DIR / str(pid) / "media" / saved["name"]
         desc = media_mod.describe(path, saved["kind"], saved["filename"])   # slow: done before any database lock
+        desc = sensitive.mask(desc or "")[0] or desc   # a photo of a card or an ID: its numbers stay out of the replies
         with db() as conn:
             cur = conn.execute(
                 "INSERT INTO media (person_id, stored_path, filename, kind, mime, bytes, width, height, description, sender, created_at) "
@@ -1353,6 +1425,11 @@ def send_chat(pid: int, body: ChatIn, request: Request = None):
     texts = [t.strip()[:4000] for t in (body.messages or [body.message]) if t and t.strip()][:12]
     if not texts and not body.media_ids:
         raise HTTPException(400, "Message is empty.")
+    # A password or account number typed here is hidden before it's saved or sent to any AI service.
+    hidden = Counter()
+    for i, t in enumerate(texts):
+        texts[i], found = sensitive.mask(t)
+        hidden += found
     sent, shared = [], []
     with db() as conn:            # 1. save what you said (a short write)
         person = _person_for_engine(conn, pid)
@@ -1406,7 +1483,8 @@ def send_chat(pid: int, body: ChatIn, request: Request = None):
         rows = conn.execute(CHAT_COLS + f" AND c.id IN ({_in(sent)}) ORDER BY c.id", [pid] + sent).fetchall() if sent else []
         mine = _chat_out(conn, rows)
     notes.update_later(pid, person["name"])      # keep their memory of this chat up to date, in the background
-    return {"bubbles": out, "sent": mine, "reaction": {"id": sent[-1], "emoji": react} if react and sent else None}
+    return {"bubbles": out, "sent": mine, "reaction": {"id": sent[-1], "emoji": react} if react and sent else None,
+            "hidden": sensitive.describe(hidden)}
 
 
 class ReactIn(BaseModel):
@@ -1539,6 +1617,7 @@ def teach(pid: int, body: TeachIn):
             (pid, "Taught in chat", None, "correction", "", now())).lastrowid
         start = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE screenshot_id = ?", (sid,)).fetchone()[0]
         lines = [{"speaker": "user", "text": prompt}] + [{"speaker": "person", "text": l.strip()} for l in reply.splitlines() if l.strip()]
+        lines = sensitive.mask_messages(lines)[0]
         conn.executemany("INSERT INTO messages (person_id, screenshot_id, position, speaker, text) VALUES (?,?,?,?,?)",
                          [(pid, sid, start + i, m["speaker"], m["text"]) for i, m in enumerate(lines)])
         bump_version(conn, pid)

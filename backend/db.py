@@ -163,6 +163,10 @@ CREATE TABLE IF NOT EXISTS feedback (
   status TEXT NOT NULL DEFAULT 'new',   -- new | read | done
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS upkeep (     -- one-time jobs that already ran (e.g. sensitive.hide_existing)
+  name TEXT PRIMARY KEY,
+  done_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, id);
 CREATE INDEX IF NOT EXISTS idx_active_user ON active_days(user_id, day);
 CREATE INDEX IF NOT EXISTS idx_messages_person ON messages(person_id, screenshot_id, position);

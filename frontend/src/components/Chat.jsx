@@ -75,6 +75,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
   const [why, setWhy] = useState(null);
   const [style, setStyle] = useState(null);
   const [error, setError] = useState("");
+  const [hiddenNote, setHiddenNote] = useState("");   // "1 password": hidden from what you just sent
   const [attach, setAttach] = useState([]);      // photos picked but not sent yet
   const [busyUpload, setBusyUpload] = useState(false);
   const [replyTo, setReplyTo] = useState(null);  // the message you're replying to
@@ -200,6 +201,7 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
         setError(res.e.message);
         return;
       }
+      if (res.r.hidden) setHiddenNote(res.r.hidden);
       if (res.r.sent?.length) {   // swap your temporary bubbles for the saved ones (real ids, real photos)
         setMsgs((m) => [...m.filter((x) => !ids.includes(x.id)),
                         ...res.r.sent.map((x) => ({ ...x, status: "seen", seenAt }))]);
@@ -452,6 +454,14 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
       {untrained && (
         <div className="banner">
           Replies will be generic until you add chats. <button className="link" onClick={() => setMode("train")}>Train {name} now</button>
+        </div>
+      )}
+
+      {hiddenNote && (
+        <div className="banner" role="status">
+          imy hid {hiddenNote} from your message, so it isn’t saved or sent anywhere. Please don’t share passwords
+          or account numbers here.{" "}
+          <button className="link" onClick={() => setHiddenNote("")}>OK</button>
         </div>
       )}
 
