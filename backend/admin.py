@@ -16,7 +16,7 @@ Make a backup first (python -m backend.backup) - there's no undo.
 import os
 import sys
 
-from . import claude  # noqa: F401  (importing it loads the .env file, like the web app does)
+from . import config  # noqa: F401  (loads the .env file, like the web app does)
 from . import insights, usage
 from .db import db, init_db
 

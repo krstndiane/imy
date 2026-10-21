@@ -30,18 +30,20 @@ def sign_in(auth, email="a@example.com"):
     return user
 
 
+PHOTO = __import__("PIL.Image", fromlist=["Image"]).new("RGB", (8, 8))
+
+
 def fake_ai(monkeypatch, answer="hi bebe", fail=False):
     """Pretend an AI provider is on and answers instantly, without the internet."""
     from backend import llm
 
-    def chat(model, system, turns):
+    def run(model, instructions, prompt, history=None, **settings):
         if fail:
             raise llm.LLMError("429: slow down", 429)
-        return answer
-    monkeypatch.setattr(llm, "_candidates", lambda: [("groq", "fake-model")])
-    monkeypatch.setattr(llm, "_vision_candidates", lambda: [("groq", "fake-eyes")])
-    monkeypatch.setattr(llm, "CALLS", {"groq": (lambda: ["fake-model"], chat)})
-    monkeypatch.setattr(llm, "_groq_see", lambda model, url, prompt: "a cake on a table")
+        return "a cake on a table" if isinstance(prompt, list) else answer   # a picture comes as [text, image]
+    monkeypatch.setattr(llm, "_candidates", lambda job="chat": ["fake-eyes" if job == "see" else "fake-model"])
+    monkeypatch.setattr(llm, "_run", run)
+    monkeypatch.setattr(llm, "image_content", lambda img: "<image>")
     monkeypatch.setattr(llm, "providers", lambda: ["groq"])
     return llm
 
@@ -60,11 +62,11 @@ def test_each_account_gets_its_daily_share(monkeypatch):
         llm.chat("sys", [], "uy", 3)
     assert "2 AI replies" in llm.explain(err.value)
     assert usage.summary(a["id"]) == {"used": 2, "limit": 2}
-    assert llm.see("data:image/png;base64,AAAA") == ""          # photos share the same allowance
+    assert llm.see(PHOTO) == ""          # photos share the same allowance
     assert llm.ask("sys", "notes please") == ""                 # background notes wait too
     sign_in(auth, "b@example.com")                              # someone else still has theirs
     assert llm.chat("sys", [], "hi", 3) == ["hi bebe"]
-    assert llm.see("data:image/png;base64,AAAA") == "a cake on a table"
+    assert llm.see(PHOTO) == "a cake on a table"
 
 
 def test_the_whole_site_can_have_a_ceiling(monkeypatch):
@@ -213,13 +215,12 @@ def test_the_app_and_the_admin_page_ask_not_to_be_listed_in_search():
 # ---------------------------------------------------------------- admin tool
 def test_admin_remove_previews_then_deletes():
     auth, main = fresh()
-    from backend import admin
-    from backend.db import UPLOAD_DIR, db
+    from backend import admin, storage
+    from backend.db import db
     sign_in(auth, "test@example.com")
     p = main.create_person(main.NewPersonIn(answers={"q1": "Law"}, consent=True))
     main.import_text(p["id"], main.TextImportIn(text="Law: hoy\nMe: hi\nLaw: kain na\n", person_name="Law"))
-    (UPLOAD_DIR / str(p["id"])).mkdir(parents=True, exist_ok=True)
-    (UPLOAD_DIR / str(p["id"]) / "x.jpg").write_bytes(b"x")
+    storage.put(f"{p['id']}/x.jpg", b"x")
     assert admin.remove("nobody@example.com", True) == 1
     assert admin.remove("test@example.com", False) == 0                         # a preview deletes nothing
     with db() as conn:
@@ -228,7 +229,7 @@ def test_admin_remove_previews_then_deletes():
     with db() as conn:
         for table in ("users", "persons", "messages", "screenshots"):
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
-    assert not (UPLOAD_DIR / str(p["id"])).exists()
+    assert storage.get(f"{p['id']}/x.jpg") is None
 
 
 # ---------------------------------------------------------------- backups
@@ -239,14 +240,17 @@ def test_a_backup_can_be_proven_and_restored():
     sign_in(auth)
     p = main.create_person(main.NewPersonIn(answers={"q1": "Law"}, consent=True))
     main.import_text(p["id"], main.TextImportIn(text="Law: hoy\nMe: hi\nLaw: kain na\n", person_name="Law"))
-    (db_mod.UPLOAD_DIR / str(p["id"])).mkdir(parents=True, exist_ok=True)
-    (db_mod.UPLOAD_DIR / str(p["id"]) / "x.jpg").write_bytes(b"photo")
+    from backend import storage
+    storage.put(f"{p['id']}/x.jpg", b"photo")
+    local = storage.kind() == "local"          # with Supabase, pictures stay there and backups are the database only
     made = backup.run()
     proof = backup.check(made["file"])
-    assert proof["ok"] and proof["rows"]["messages"] == 3 and proof["uploads"] == 1
+    assert proof["ok"] and proof["rows"]["messages"] == 3 and proof["uploads"] == (1 if local else 0)
     into = Path(tempfile.mkdtemp()) / "restored"
     back = backup.restore(made["file"], into)
-    assert back["ok"] and (into / "imy.db").exists() and (into / "uploads" / str(p["id"]) / "x.jpg").read_bytes() == b"photo"
+    assert back["ok"] and (into / "imy.db").exists()
+    if local:
+        assert (into / "uploads" / str(p["id"]) / "x.jpg").read_bytes() == b"photo"
     assert "error" in backup.restore(made["file"], into)       # never over an existing database
     raw = bytearray(Path(made["file"]).read_bytes())
     raw[len(raw) // 3] ^= 0xFF
@@ -255,7 +259,7 @@ def test_a_backup_can_be_proven_and_restored():
     assert backup.check(broken)["ok"] is False                  # damage is reported, not crashed on
     sneaky = Path(tempfile.mkdtemp()) / "sneaky.zip"
     with zipfile.ZipFile(sneaky, "w") as z:
-        z.write(db_mod.DB_PATH, "imy.db")
+        z.writestr("imy.db", zipfile.ZipFile(made["file"]).read("imy.db"))
         z.writestr("../../outside.txt", "x")
     assert "unsafe" in backup.restore(sneaky, Path(tempfile.mkdtemp()) / "r")["error"]
 

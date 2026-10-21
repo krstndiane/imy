@@ -20,8 +20,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import claude  # noqa: F401  (loads .env, the same way imy does)
+from . import config  # noqa: F401  (loads .env, the same way imy does)
 from . import backup, mailer, usage
+from . import db as db_mod, storage
 from .db import DATA_DIR, DB_PATH
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,23 +50,22 @@ def env(name: str, default: str = "") -> str:
 
 # ---------------------------------------------------------------- settings
 def check_settings() -> None:
-    if env("GROQ_API_KEY"):
-        ok("Groq key is set")
+    if not env("GROQ_API_KEY"):
+        fail("No GROQ_API_KEY", "imy needs Groq to read screenshots and write replies. Without it screenshots can't "
+             "be uploaded and every reply is imy's own basic one. Get a key at console.groq.com/keys.")
     else:
-        warn("No GROQ_API_KEY", "Replies will all be imy's own (no AI). Add a key from console.groq.com/keys.")
+        try:
+            import pydantic_ai  # noqa: F401
+            from pydantic_ai.models.groq import GroqModel  # noqa: F401
+            ok("Groq key is set, Pydantic AI is installed", "Prove it really answers: python -m backend.services")
+        except ImportError as exc:
+            fail(f"Groq key is set but Pydantic AI isn't installed ({exc.name})",
+                 "pip install -r backend/requirements.txt (or rebuild the Docker image).")
+    for old in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+        if env(old):
+            warn(f"{old} is set but no longer used", "imy uses Groq only now. Remove it from .env.")
 
-    if env("GEMINI_API_KEY") or env("GOOGLE_API_KEY"):
-        if env("IMY_GEMINI_PAID") == "1":
-            ok("Gemini is on, with billing")
-        else:
-            fail("Gemini key is set on the FREE tier",
-                 "Google's free tier may let people read what's sent. Turn on billing and set IMY_GEMINI_PAID=1, "
-                 "or remove GEMINI_API_KEY. The privacy page depends on this.")
-
-    if env("ANTHROPIC_API_KEY"):
-        warn("ANTHROPIC_API_KEY is set",
-             "Claude can read screenshots, but the privacy page says screenshot images are never sent anywhere. "
-             "Remove the key, or update privacy.html to say screenshots may go to Anthropic.")
+    check_services()
 
     email = env("IMY_CONTACT_EMAIL")
     if not email:
@@ -112,6 +112,21 @@ def check_settings() -> None:
         ok(f"Time zone {env('TZ')}")
 
 
+def check_services() -> None:
+    """Where the data lives. On a live site: the database on Turso, pictures in Supabase, so the
+    server keeps nothing and can be rebuilt or moved without losing anyone's chats."""
+    if db_mod.db_kind() == "turso":
+        ok("Database: Turso (" + (env("IMY_TURSO_URL") or env("TURSO_DATABASE_URL")).split("//")[-1].split(".")[0] + ")")
+    else:
+        warn("Database: a file on this server (data/imy.db)", "Fine on your computer. For the live site set "
+             "IMY_TURSO_URL and IMY_TURSO_TOKEN, so nothing is lost if the server is replaced.")
+    if storage.kind() == "supabase":
+        ok(f"Pictures: Supabase Storage (bucket {env('IMY_SUPABASE_BUCKET') or 'imy-uploads'})")
+    else:
+        warn("Pictures: a folder on this server (data/uploads)", "Fine on your computer. For the live site set "
+             "SUPABASE_URL and SUPABASE_SERVICE_KEY.")
+
+
 def check_email() -> None:
     """Forgot password needs two things: an email service, and the site's real address for the link."""
     site = mailer.site_url()
@@ -126,8 +141,14 @@ def check_email() -> None:
     else:
         ok(f"Reset links point to {site}")
     if not mailer.configured():
-        fail("Email isn't set up (IMY_SMTP_HOST)", "Without it, anyone who forgets their password is locked out "
+        fail("Email isn't set up (RESEND_API_KEY)", "Without it, anyone who forgets their password is locked out "
              "for good. See 'Email' in the README, then send yourself a test: python -m backend.mailer you@example.com")
+    elif mailer.service() == "resend":
+        frm = env("IMY_MAIL_FROM")
+        if not frm:
+            fail("No IMY_MAIL_FROM", "Set it to an address on your verified domain, e.g. imy <no-reply@pdyntech.com>.")
+        else:
+            ok(f"Email: Resend as {frm}", "Proven only by a real test: python -m backend.mailer you@example.com")
     elif not mailer.sender():
         fail("No IMY_MAIL_FROM", "Set IMY_MAIL_FROM (or IMY_SMTP_USER) to the address emails come from.")
     elif not env("IMY_SMTP_PASSWORD"):
@@ -140,6 +161,8 @@ def check_email() -> None:
 
 # ---------------------------------------------------------------- data, backups, disk
 def check_data() -> None:
+    if db_mod.db_kind() == "turso":
+        return check_turso()
     if not DB_PATH.exists():
         warn(f"No database yet at {DB_PATH}", "Normal before the first start. imy creates it.")
         return
@@ -170,6 +193,27 @@ def check_data() -> None:
         warn(f"{free:.1f} GB free where imy keeps its data", "Fine to start. Plan 15-20 GB per 1,000 active people.")
     else:
         ok(f"{free:.0f} GB free for data")
+
+
+def check_turso() -> None:
+    """The same health checks as for the local file, asked of Turso (read-only)."""
+    try:
+        with db_mod.db() as conn:
+            quick = conn.execute("PRAGMA quick_check").fetchone()[0]
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            accounts = conn.execute("SELECT email FROM users").fetchall() if "users" in tables else []
+    except sqlite3.Error as exc:
+        fail("Couldn't reach the Turso database", f"{exc}. Check IMY_TURSO_URL and IMY_TURSO_TOKEN.")
+        return
+    (ok if quick == "ok" else fail)(f"Database check: {quick}", "" if quick == "ok" else "Restore from Turso's history.")
+    if not tables:
+        warn("The Turso database is empty", "Normal before the first start. imy creates the tables.")
+    test = [e for (e,) in accounts if re.search(r"@(example\.(com|org|net)|test\.|localhost)|^test", e, re.I)]
+    if test:
+        warn(f"{len(test)} test-looking account(s): {', '.join(test[:5])}{' ...' if len(test) > 5 else ''}",
+             "Remove them before launch: python -m backend.admin remove EMAIL --yes")
+    else:
+        ok(f"{len(accounts)} account(s), none look like test accounts")
 
 
 def check_backups() -> None:
@@ -299,7 +343,7 @@ def check_live(url: str, require_https: bool = True) -> None:
         ok("Live 'forgot password' is able to send email")
     elif st == 503:
         fail("Live 'forgot password' says email isn't set up",
-             "Set IMY_SMTP_HOST (and the rest) plus IMY_PUBLIC_URL on the server, then restart imy.")
+             "Set RESEND_API_KEY and IMY_PUBLIC_URL on the server, then restart imy.")
     elif st != 429:
         warn(f"Live 'forgot password' answered {st}", "Deploy the latest version.")
     st, _, body = _get(url + "/api/status")

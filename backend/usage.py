@@ -86,7 +86,7 @@ def blocked(kind: str = "reply") -> str:
         return "imy's AI allowance for today is used up; it comes back at midnight"
     limit = per_account()
     uid = auth.current_id()
-    if limit and uid is not None and used(uid) >= limit:
+    if limit and uid is not None and kind != "read" and used(uid) >= limit:   # reading screenshots is setup, not chatting
         return f"you've used today's {limit} AI {'reply' if limit == 1 else 'replies'}; they come back at midnight"
     return ""
 

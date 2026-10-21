@@ -36,32 +36,33 @@ def sign_in(auth, email="a@example.com", terms=True):
 def ai_on(monkeypatch):
     """Pretend an AI service is set up, whatever the real .env says (it is loaded when imy is imported)."""
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("IMY_LLM", "1")
-    monkeypatch.setenv("IMY_CLAUDE", "1")
-    monkeypatch.setenv("IMY_AI_MODE", "fallback")
+    monkeypatch.setenv("IMY_AI_MODE", "always")
     monkeypatch.setenv("IMY_AI_DAILY_PER_ACCOUNT", "0")
     monkeypatch.setenv("IMY_AI_DAILY_SITE", "0")
 
 
 def test_switching_the_outside_ai_off_stops_every_call(monkeypatch):
     auth, main = fresh()
-    from backend import claude, llm, usage
+    from backend import llm, usage
+    from PIL import Image
     ai_on(monkeypatch)
     me = sign_in(auth)
 
-    assert llm.enabled() and llm.can_see() and claude.enabled() and usage.blocked() == ""
+    assert llm.enabled() and llm.can_see() and usage.blocked() == ""
     status = llm.status()
     assert "groq" in status["providers"] and status["providers"] == llm.providers()
     assert status["available"] and not status["opted_out"]
 
     auth.set_cloud_ai(me["id"], False)
-    assert not llm.enabled() and not llm.can_see() and not claude.enabled()
+    assert not llm.enabled() and not llm.can_see()
     assert "turned off" in usage.blocked("reply")
     with pytest.raises(llm.OverLimit):                       # a reply is refused before anything is sent
         llm.chat("system", [], "hello", 3)
     assert llm.ask("system", "question") == ""               # background notes wait
-    assert llm.see("data:image/png;base64,AAAA") == ""       # a photo isn't described
+    assert llm.see(Image.new("RGB", (8, 8))) == ""             # a photo isn't described
+    with pytest.raises(llm.OverLimit):                       # and a screenshot isn't read
+        llm.read_screenshot(Image.new("RGB", (8, 8)), [])
     status = llm.status()
     assert status["providers"] == [] and status["available"] and status["opted_out"]
 
@@ -119,16 +120,15 @@ def test_an_account_from_before_the_terms_is_asked_too():
 # ---------------------------------------------------------------- Download my data
 def seed_person(name, user_id, with_files=True):
     """A person with a screenshot, a shared photo and a short chat, as the app would store them."""
-    from backend.db import UPLOAD_DIR, db, now
+    from backend.db import db, now
     with db() as conn:
         pid = conn.execute(
             "INSERT INTO persons (name, answers, use_llm, data_version, created_at, updated_at, user_id, nick_them, memory) "
             "VALUES (?, ?, 0, 0, ?, ?, ?, 'love', 'birthday is June 3')",
             (name, json.dumps({"q1": "kind"}), now(), now(), user_id)).lastrowid
-    folder = UPLOAD_DIR / str(pid)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "shot.png").write_bytes(b"\x89PNG-" + name.encode())
-    (folder / "pic.jpg").write_bytes(b"jpeg-" + name.encode())
+    from backend import storage
+    storage.put(f"{pid}/shot.png", b"\x89PNG-" + name.encode())
+    storage.put(f"{pid}/pic.jpg", b"jpeg-" + name.encode())
     with db() as conn:
         sid = conn.execute(
             "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at) VALUES (?,?,?,?,?,?)",

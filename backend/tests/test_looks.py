@@ -1,83 +1,22 @@
 """Run with:  pytest backend/tests -q   (from the project root)
 
-Recognising the app a screenshot came from, its look (dark/light, bubble colours) and its chat name,
-plus quoted replies and group chats. Screens are built by hand, so no OCR is needed.
+The chat's look (app, dark/light, bubble colours) and when Groq writes the reply.
 """
-import numpy as np
-
-from backend import engine, llm, looks, parser
-from backend.ocr import Line, Region, Screen
-
-W, H = 1170, 2532
+from backend import engine, llm, looks
 
 
-def L(text, x0, y0, x1, y1, conf=92):
-    return Line(text, x0, y0, x1, y1, conf)
+def test_colours_from_a_screenshot_and_readable_text_on_them():
+    c = looks.colours("#000000", "#0084FF", "#3a3b3c")
+    assert c == {"bg": "#000000", "mode": "dark", "user": "#0084ff", "user_ink": "#ffffff",
+                 "them": "#3a3b3c", "them_ink": "#ffffff"}
+    assert looks.colours("#ffffff", "#e9e9eb", "") == {"bg": "#ffffff", "mode": "light"}   # bubbles only as a pair
+    assert looks.colours("not a colour", "", "") == {}
 
 
-def screen(bg, them=None, user=None, avatars=0, lines=(), extra_regions=()):
-    rgb = np.zeros((H, W, 3), dtype=np.uint8)
-    rgb[:] = bg
-    regions = []
-    if them:
-        regions.append(Region(60, 700, 600, 800, them, "", [L("hello there", 100, 730, 400, 770)]))
-    if user:
-        regions.append(Region(600, 900, 1140, 1000, user, "", [L("hi po", 900, 930, 1100, 970)]))
-    regions += list(extra_regions)
-    return Screen(list(lines) + [l for r in regions for l in r.lines], (W, H), rgb, 420, 2260, regions, bg,
-                  [(20, 0, 80, 60)] * avatars)
-
-
-def platform_of(sc, text=""):
-    sides = [parser.bubble_side(r, W) for r in sc.bubbles]
-    return looks.analyze(sc, sides, text)
-
-
-def test_recognises_apps_from_colours_words_and_layout():
-    m = platform_of(screen((0, 0, 0), (51, 51, 52), (18, 109, 255), avatars=2), "Turn on active status")
-    assert m["platform"] == "messenger" and m["mode"] == "dark" and m["user"] == "#126dff"
-    assert platform_of(screen((0, 0, 0), (38, 38, 40), (72, 146, 247)), "iMessage")["platform"] == "imessage"
-    assert platform_of(screen((239, 234, 226), (255, 255, 255), (217, 253, 211)))["platform"] == "whatsapp"
-    assert platform_of(screen((14, 22, 33), (24, 37, 51), (43, 82, 120)))["platform"] == "telegram"
-    wa = platform_of(screen((11, 20, 26), (32, 44, 51), (0, 92, 75)))
-    assert wa["platform"] == "whatsapp" and wa["mode"] == "dark" and wa["user_ink"] == "#ffffff"
-
-
-def test_words_beat_colours_when_they_disagree():
-    # A custom Messenger theme (pink bubbles) on white: the words give it away.
-    m = platform_of(screen((255, 255, 255), (240, 240, 240), (255, 80, 160), avatars=1), "Active now\nAa")
-    assert m["platform"] == "messenger"
-
-
-def test_chat_name_and_wrong_chat_warning():
-    title = L("Lawrence Panes", 300, 148, 700, 185)
-    status = L("Active 5m ago", 300, 190, 600, 215)
-    pinned = L("Fully Booked SM North — Level 5", 200, 300, 900, 345)
-    sc = screen((0, 0, 0), (51, 51, 52), (18, 109, 255), lines=[L("11:50", 60, 58, 160, 98), title, status, pinned])
-    assert looks.chat_title(sc) == "Lawrence Panes"
-    assert looks.same_person("Lawrence Panes", ["law", "Lawrence"]) is True
-    assert looks.same_person("Ana Cruz", ["law", "Lawrence"]) is False
-    assert looks.same_person("", ["law"]) is None
-
-
-def test_quoted_reply_is_skipped():
-    label = L("You replied to Lawrence", 700, 600, 1100, 630)
-    quote = Region(650, 640, 1140, 730, (40, 40, 40), "", [L("tara gym bukas", 700, 665, 1050, 705)])
-    reply = Region(700, 745, 1140, 830, (18, 109, 255), "", [L("sige ba", 900, 770, 1100, 810)])
-    sc = screen((0, 0, 0), (51, 51, 52), None, lines=[label], extra_regions=[quote, reply])
-    out = parser.parse_screen(sc, ["Lawrence"])
-    assert [(m["speaker"], m["text"]) for m in out["messages"]] == [("person", "hello there"), ("user", "sige ba")]
-
-
-def test_group_chat_keeps_only_the_person_and_you():
-    mia = Region(60, 700, 600, 790, (51, 51, 52), "", [L("ako na bahala", 100, 725, 500, 765)])
-    law = Region(60, 900, 600, 990, (51, 51, 52), "", [L("g ako bukas", 100, 925, 500, 965)])
-    me = Region(600, 1100, 1140, 1190, (18, 109, 255), "", [L("sige sige", 900, 1125, 1100, 1165)])
-    names = [L("Mia", 70, 655, 140, 690), L("Lawrence", 70, 855, 260, 890)]
-    sc = screen((0, 0, 0), lines=names, extra_regions=[mia, law, me])
-    out = parser.parse_screen(sc, ["Lawrence"])
-    assert out["meta"]["group"] and out["meta"]["senders"] == ["Lawrence", "Mia"]
-    assert [(m["speaker"], m["text"]) for m in out["messages"]] == [("person", "g ako bukas"), ("user", "sige sige")]
+def test_chat_name_matches_the_person():
+    assert looks.same_person("Lawrence Dela Cruz", ["Lawrence"]) is True
+    assert looks.same_person("Mama", ["Lawrence", "law"]) is False
+    assert looks.same_person("", ["Lawrence"]) is None
 
 
 def test_look_summary_prefers_the_chosen_app_and_its_colours():
@@ -98,8 +37,18 @@ def _person_and_msgs():
     return person, msgs
 
 
+def test_groq_writes_every_reply_by_default(monkeypatch):
+    person, msgs = _person_and_msgs()
+    monkeypatch.delenv("IMY_AI_MODE", raising=False)
+    monkeypatch.setattr(llm, "enabled", lambda: True)
+    monkeypatch.setattr(llm, "chat", lambda system, history, text, n, name="": ["hello bru"])
+    r = engine.generate_reply({**person, "id": 779}, msgs, [], "hi")
+    assert llm.mode() == "always" and r.source == "ai" and r.bubbles == ["hello bru"]
+
+
 def test_ai_only_when_the_trained_data_isnt_enough(monkeypatch):
     person, msgs = _person_and_msgs()
+    monkeypatch.setenv("IMY_AI_MODE", "fallback")
     asked = []
 
     def fake_chat(system, history, text, n, name=""):

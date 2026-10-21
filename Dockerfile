@@ -1,12 +1,13 @@
-# imy in one container: the API + the built website + Tesseract for reading screenshots.
+# imy in one container: the API + the built website. Screenshots are read by Groq (no OCR here),
+# the database can be on Turso and pictures in Supabase (see .env.example), so the container keeps nothing.
 #   docker build -t imy .
 #   docker run -p 8000:8000 -v imy-data:/data --env-file .env imy
 # Works on any host that runs Docker (Render, Railway, Fly.io, a VPS...). Keep /data on a persistent
-# disk/volume: it holds the database and uploaded screenshots. Before launch: python -m backend.preflight
+# disk/volume: without Turso and Supabase it holds the database and uploaded pictures. Before launch: python -m backend.preflight
 FROM python:3.12-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tzdata \
+ && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

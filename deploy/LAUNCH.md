@@ -8,60 +8,63 @@ checks (`python -m backend.preflight`).
 
 ---
 
-## 1. Before you deploy (15 minutes, on your Mac)
+## 1. Before you deploy (about 30 minutes, on your Mac)
 
-### 1.1 Gmail App Password  ☐
-Without this, imy can send no email at all: no password resets, no admin sign-in links, no feedback
-notices. On the live site you also need it once to prove the admin inbox is yours.
+Each key goes in `.env` on your Mac. `.env.example` says where each one comes from.
 
-1. Sign in to **pdyntechnology@gmail.com**.
-2. Turn on 2-Step Verification: myaccount.google.com → Security.
-3. Go to **myaccount.google.com/apppasswords**, name it `imy`, and copy the 16 letters.
-4. Put it in `.env` on your Mac, with no spaces:
-   `IMY_SMTP_PASSWORD=abcdefghijklmnop`
-5. Restart imy, then test: `python -m backend.mailer kristinadianeaviles@gmail.com`
-   The test email should arrive within a minute (check spam the first time).
+### 1.1 Groq (the AI)  ☐
+Required: it reads screenshots and writes the replies.
+1. **console.groq.com/keys** → Create API Key → `GROQ_API_KEY=gsk_...`
+2. Settings → Data Controls → turn on **Zero Data Retention**.
 
-Keep those 16 letters somewhere safe. You'll be asked for them again when you set up the server.
+### 1.2 Turso (the database)  ☐
+1. **turso.tech** → sign up → create a database in **Tokyo** or **Singapore**.
+2. `turso db show <name> --url` → `IMY_TURSO_URL=libsql://...`
+3. `turso db tokens create <name>` → `IMY_TURSO_TOKEN=...`
 
-### 1.2 Groq API key  ☐
-Without it, replies come from imy's own reading of the uploaded messages — the vague ones.
+### 1.3 Supabase (the pictures)  ☐
+1. **supabase.com** → New project (same region as Turso).
+2. Project Settings → API → Project URL → `SUPABASE_URL`, **service_role** key → `SUPABASE_SERVICE_KEY`.
+   Never put the service_role key anywhere but `.env`.
 
-1. **console.groq.com** → sign in → **API Keys** → Create API key.
-2. Copy it (it starts `gsk_`) and put it in `.env`: `GROQ_API_KEY=gsk_...`
-3. Restart imy. The Terminal should say `[imy] AI brain on: groq`.
-4. Chat with someone you've set up and see whether the replies sound more like them.
+### 1.4 Resend (email from pdyntech.com)  ☐
+1. **resend.com** → Domains → Add Domain → `pdyntech.com`.
+2. Add every DNS record it shows in **Route 53** → Hosted zones → pdyntech.com → Create record.
+   Wait until Resend says **Verified** (minutes, sometimes an hour).
+3. API Keys → Create (Sending access) → `RESEND_API_KEY=re_...`
 
-Free, with a daily cap for the whole site. imy already shares that cap fairly between accounts
-(`IMY_AI_DAILY_PER_ACCOUNT`), and falls back to its own replies when it runs out.
-
-### 1.3 Last look on your own Mac  ☐
-- `python -m backend.preflight` — everything should be OK except the ones about the live address.
-- Open the homepage, the app and `/admin` once more.
+### 1.5 Try them all  ☐
+```bash
+pip install -r backend/requirements.txt      # installs Pydantic AI
+python -m backend.services pdyntechnology@gmail.com
+pytest backend/tests -q
+```
+Every service line should say OK, and the test email should arrive (check spam the first time).
+Then `python -m backend.preflight`: everything OK except the lines about the live address.
 
 ---
 
 ## 2. Deploy
 
-The steps are in the main README under **Putting imy on the internet**. In short:
+The steps are in the main README under **Deploying**. In short:
 
 1. Oracle Cloud account (Always Free), Ubuntu server, ports 80 and 443 open in the security list.
-2. A free address at **duckdns.org** pointed at the server's IP.
+2. Route 53 → pdyntech.com → Create record: `imy`, type **A**, the server's IP, TTL 300.
 3. From your Mac: `bash deploy/push-to-server.sh ubuntu@SERVER_IP ~/Downloads/your-key.key`
-   It asks for the address, the Gmail App Password, who the admins are, and the Groq key.
-4. `python -m backend.preflight --url https://your-address` — every line should say OK.
+   It asks for the address (`imy.pdyntech.com`), the admins, and the Groq, Turso, Supabase and Resend keys.
+4. `python -m backend.preflight --url https://imy.pdyntech.com`: every line should say OK.
 
 **Pick the smaller shape.** Oracle may reclaim an Always Free server that looks idle: over 7 days,
-CPU under 20%, network under 20% *and* memory under 20%, all three at once. A 1 OCPU / 6 GB server
-running imy sits well above the memory line; a 2 OCPU / 12 GB one with no visitors might not.
-Smaller is safer here, and imy needs nothing like 12 GB.
+CPU under 20%, network under 20% *and* memory under 20%, all three at once. With the database and
+pictures elsewhere imy needs very little, so a 1 OCPU / 6 GB server is plenty. Upgrading the account
+to Pay As You Go (still ₱0 inside the free limits) stops the reclaiming altogether.
 
 ---
 
 ## 3. The first hour it's live
 
 ### 3.1 Prove the admin page is yours  ☐
-Open `https://your-address/admin`, type **kristinadianeaviles@gmail.com**, and use
+Open `https://imy.pdyntech.com/admin`, type **pdyntechnology@gmail.com**, and use
 **"No password? Email me a one-time link."** Open the link from your inbox. After that your normal
 imy password opens `/admin` by itself, on any device.
 
@@ -81,13 +84,13 @@ the way through:
 If anything is slow or ugly on the phone, tell me and I'll fix it before you share the link.
 
 ### 3.3 Check the link preview  ☐
-Paste `https://your-address` into **developers.facebook.com/tools/debug/**, press *Scrape Again*,
+Paste `https://imy.pdyntech.com` into **developers.facebook.com/tools/debug/**, press *Scrape Again*,
 and you should see the "Miss mo na?" card. Messenger and Facebook cache the old answer, so always
 scrape once after a change. Then send the link to yourself on Messenger and look at the card.
 
 ### 3.4 Watch for it going down  ☐
 Make a free account at **uptimerobot.com**, add an HTTPS monitor for
-`https://your-address/api/health`, every 5 minutes, with email alerts to pdyntechnology@gmail.com.
+`https://imy.pdyntech.com/api/health`, every 5 minutes, with email alerts to pdyntechnology@gmail.com.
 It emails you when the site stops answering, so you hear it from a robot and not from a user.
 
 ---
@@ -109,33 +112,22 @@ keeping the data secure, and answering people who ask for their data or its dele
 Ask the NPC directly at **privacy.gov.ph** or have a lawyer look at it. Don't take this paragraph
 as the answer — it's a starting point, not advice.
 
-### 4.2 A name of your own  ☐
-`imy-something.duckdns.org` is free and works, but a name of your own looks like a real product and
-makes your email less likely to land in spam.
-
-- **.com** (imyapp.com and the like): roughly ₱600–900 a year. The sensible first choice.
-- **.ph**: around US$42 a year (about ₱2,400), renewing near US$45. Lovely, but ten times the price.
-
-Buy it anywhere (Namecheap, Porkbun, Cloudflare), point it at the server's IP, then change
-`IMY_DOMAIN` and `IMY_PUBLIC_URL` in the server's `.env` and run `push-to-server.sh` again. Caddy
-gets the new certificate by itself.
-
 ---
 
 ## 5. Every week or so, once it's live
 
 - **Download a backup:** `bash deploy/get-backup.sh ubuntu@SERVER_IP ~/Downloads/your-key.key`
-  Put the zip in iCloud or Google Drive. The server's own daily backups are on the same disk, so
-  they don't save you from losing the server.
+  Put the zip in iCloud or Google Drive. It holds the whole Turso database; the pictures stay in Supabase.
 - **Look at `/admin`:** who's using it, and what they wrote in Feedback.
-- **Watch the Oracle bill:** it should be ₱0. If it isn't, something slipped out of the free tier.
-  Set a budget alert of $1 in the Oracle console so you hear about it the same day.
+- **Watch the bills:** Oracle, Turso, Supabase, Groq and Resend should all be ₱0 on their free
+  plans. Set a $1 budget alert in the Oracle console, and glance at each dashboard's usage page.
 
 ---
 
 ## If something breaks
 
 - `sudo docker compose -f ~/imy/deploy/docker-compose.yml logs -f imy` — what the site is saying.
-- `python -m backend.preflight --url https://your-address` — the launch checks, against the live site.
+- `python -m backend.preflight --url https://imy.pdyntech.com` — the launch checks, against the live site.
+- `sudo docker compose -f ~/imy/deploy/docker-compose.yml exec imy python -m backend.services` — which outside service is failing.
 - `python -m backend.admin link` — an admin sign-in link printed on the server, if email is down.
 - Restart: `sudo docker compose -f ~/imy/deploy/docker-compose.yml restart imy`

@@ -93,7 +93,6 @@ export const api = {
   createPerson: (answers, platform, consent) => send("POST", "/api/persons", { answers, platform, consent: !!consent }),
   updatePerson: (id, answers, platform) => send("PUT", `/api/persons/${id}`, { answers, platform }),
   deletePerson: (id) => send("DELETE", `/api/persons/${id}`),
-  setLlm: (id, use_llm) => send("PUT", `/api/persons/${id}/settings`, { use_llm }),
   setLook: (id, look) => send("PUT", `/api/persons/${id}/look`, look),   // { platform?, mode?, colors? }
   // Profile picture, nicknames and chat colour: what you'd change by tapping a name in Messenger.
   setProfile: (id, patch) => send("PUT", `/api/persons/${id}/profile`, patch),   // { nick_them?, nick_me?, color?, emoji? }

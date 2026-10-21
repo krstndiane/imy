@@ -313,9 +313,6 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
     if (!confirm(`Clear your chat history with ${name}? Their learned data stays.`)) return;
     try { await api.clearChat(person.id); setMsgs([]); setOlder(false); onChanged(); } catch (e) { setError(e.message); }
   }
-  async function toggleLlm(on) {
-    try { await api.setLlm(person.id, on); onChanged(); } catch (e) { setError(e.message); }
-  }
   async function setLook(patch) {
     if (patch.platform !== undefined) dismissHint();   // you chose an app yourself: no need to suggest one
     try { await api.setLook(person.id, patch); onChanged(); } catch (e) { setError(e.message); }
@@ -409,18 +406,14 @@ export default function Chat({ person, persons = [], theme = "dark", onChanged, 
               <p className="muted small">{learned} · {style.exchanges} back-and-forth exchanges indexed · matching with {style.embedder}</p>
               <p className="small">
                 {style.ai?.providers?.length
-                  ? `Smart replies are on (${style.ai.providers.join(" + ")}): when what they taught imy isn't enough, an AI answers in their style.`
+                  ? "Smart replies are on: Groq writes their replies in their style. If it's busy, imy answers from their old messages."
                   : style.ai?.opted_out
                     ? "Smart replies are off for your account: nothing leaves imy. You can switch them back on in the account menu."
-                    : "Smart replies are off. Add a free Groq key to the .env file to turn them on (see the README)."}
+                    : "Smart replies are off. Add a Groq key (GROQ_API_KEY) to the .env file to turn them on (see the README)."}
               </p>
               <label className="check">
                 <input type="checkbox" checked={showWhy} onChange={(e) => toggleWhy(e.target.checked)} />
                 Show a “why this reply?” link under their messages.
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={person.use_llm} onChange={(e) => toggleLlm(e.target.checked)} />
-                Use a local model (Ollama) to write replies. Needs Ollama running; falls back automatically if not.
               </label>
             </>
           )}

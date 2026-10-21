@@ -6,13 +6,11 @@ How a reply is produced:
                and 👍 / Fix in the chat - is used first, word for word, when your message matches.
   2. LOCAL     smalltalk.py / personality.py write a reply for what you said, in their style
                (casing, Taglish, endearments, emojis measured from their real messages).
-  3. AI        If a free AI key is set (llm.py: Groq, or Gemini) and step 2 isn't confident - anything
-               beyond hi / haha / goodnight - the AI writes the reply AS THEM, using their style and
+  3. AI        Groq (llm.py, through Pydantic AI) writes the reply AS THEM, using their style and
                real messages as examples. It can also really answer questions, in their voice.
-               IMY_AI_MODE=always uses the AI for everything except what you taught.
+               This is the default (IMY_AI_MODE=always). With IMY_AI_MODE=fallback, Groq is only
+               asked when step 2 isn't confident - anything beyond hi / haha / goodnight.
   4. FALLBACK  No key, no internet or the free limit reached: step 2's reply. Nothing breaks.
-
-  Optional: Ollama (a local model, "Use a local model" in the chat menu) or Claude (ANTHROPIC_API_KEY).
 
 Matching uses sentence-transformers when installed (loaded in the background, so the first message
 isn't slow) and TF-IDF on letter patterns otherwise.
@@ -23,7 +21,6 @@ import os
 import random
 import re
 import threading
-import urllib.request
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -32,7 +29,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import normalize
 
-from . import claude, llm, notes, parser, personality, smalltalk, style as style_mod
+from . import llm, notes, parser, personality, smalltalk, style as style_mod
 
 # (strong, weak) cosine-similarity cut-offs. Above "strong" we trust the match.
 # Between weak and strong we use it only if no intent rule applies.
@@ -381,44 +378,6 @@ class PersonIndex:
                      note="This is how you said they'd reply to a message like this (from the interview or a fix in the chat).",
                      embedder=self.space.kind)
 
-    # ---- optional local LLM (Ollama)
-    def _persona_prompt(self, examples: list[tuple[str, list[str]]]) -> str:
-        labels = _question_labels()
-        facts = "\n".join(f"- {labels[k]} {v.strip()}" for k, v in self.answers.items() if v and v.strip() and k in labels)
-        style = "\n".join("- " + s for s in style_mod.describe_style(self.style))
-        shots = "\n".join(f"Them: {p}\n{self.name}: " + " / ".join(r) for p, r in examples)
-        return (
-            f"You are role-playing {self.name} in a text conversation with someone close to them.\n"
-            f"Write ONLY the text message(s) {self.name} would send next. No narration, no quotation marks. "
-            f"If they would send several short messages, put each on its own line (max {MAX_BUBBLES}).\n\n"
-            f"What the user told us about {self.name}:\n{facts or '(nothing provided)'}\n\n"
-            f"How {self.name} writes:\n{style or '(unknown)'}\n\n"
-            f"Real examples of how {self.name} replied before:\n{shots or '(none)'}\n"
-        )
-
-    def llm_reply(self, user_text: str, history: list[dict], rng: random.Random) -> Reply:
-        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-        model = os.environ.get("OLLAMA_MODEL", "llama3.2")
-        examples = []
-        if self.prompt_vecs is not None:
-            sims = self.space.similarity(self.prompt_vecs, self._query(user_text, history))
-            examples = [(self.prompts[i], self.replies[i]) for i in np.argsort(-sims)[:6]]
-        messages = [{"role": "system", "content": self._persona_prompt(examples)}]
-        for h in history[-10:]:
-            messages.append({"role": "user" if h["role"] == "user" else "assistant", "content": h["text"]})
-        messages.append({"role": "user", "content": user_text})
-        req = urllib.request.Request(
-            host.rstrip("/") + "/api/chat",
-            data=json.dumps({"model": model, "messages": messages, "stream": False, "options": {"temperature": 0.8}}).encode(),
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            text = json.load(resp)["message"]["content"].strip()
-        bubbles = [l.strip() for l in text.splitlines() if l.strip()][:MAX_BUBBLES]
-        if not bubbles:
-            raise RuntimeError("empty response")
-        return Reply(bubbles, "llm", 0.0, None, detect_intent(user_text), note=f"Written by local model {model}.", embedder=self.space.kind)
-
     # ---- the free AI brain (llm.py)
     def _examples(self, user_text: str, history: list[dict], k: int = 6) -> list[tuple[str, list[str]]]:
         if self.prompt_vecs is None:
@@ -472,8 +431,7 @@ class PersonIndex:
         ex = "\n".join(f"They: {p[:200]}\n{name}: " + " / ".join(r)[:240] for p, r in examples) or "(none yet)"
         tg = "\n".join(f"They: {p[:160]}\n{name}: " + " / ".join(r)[:200] for p, r in taught)
         samples = "\n".join(f"- {t}" for t in self._samples()) or "(none yet)"
-        from . import claude as _c
-        platform = _c.PLATFORM_LABELS.get(self.platform, "a chat app")
+        platform = llm.PLATFORM_LABELS.get(self.platform, "a chat app")
         return f"""You are {name}{f' ("{nick}")' if nick else ''}, texting someone close to you on {platform}. Stay {name} for the whole chat.
 
 ABOUT {name.upper()} (from the person you're texting):
@@ -518,19 +476,6 @@ RULES
         bubble = rng.choice(pool) if pool and rng.random() < 0.6 else rng.choice(lines)
         return Reply([bubble], "media", 0.0, None, None, embedder=self.space.kind,
                      note="They reacted to what you sent. Add a free AI key and they'll say what they see in it.")
-
-    # ---- optional Claude API (see claude.py)
-    def claude_reply(self, user_text: str, history: list[dict], use: str = "claude") -> Reply:
-        labels = _question_labels()
-        facts = "\n".join(f"- {labels[k]} {v.strip()}" for k, v in self.answers.items() if v and v.strip() and k in labels)
-        style = "\n".join("- " + s for s in style_mod.describe_style(self.style))
-        system = claude.persona_system(self.name, self.answers.get("q5", ""), self.platform, facts, style,
-                                       self.messages, MAX_BUBBLES)
-        if use == "claude":
-            bubbles, who = claude.chat(system, history, user_text, MAX_BUBBLES), f"Claude ({claude.MODEL})"
-        else:   # free AI mode, see llm.py
-            bubbles, who = llm.chat(system, history, user_text, MAX_BUBBLES), llm.label()
-        return Reply(bubbles, use, 0.0, None, detect_intent(user_text), note=f"Written by {who}.", embedder=self.space.kind)
 
 
 # ------------------------------------------------------------------ cache + public API
@@ -619,19 +564,6 @@ def generate_reply(person: dict, messages: list[dict], history: list[dict], user
             except Exception as exc:
                 print(f"[imy] reply to a shared photo failed: {exc}")
         return index.media_reply(shared, random.Random(seed))
-    if claude.enabled():
-        try:
-            return index.claude_reply(user_text, history)
-        except Exception as exc:
-            print(f"[imy] Claude failed: {exc}")
-            note = f"Couldn't get a reply from Claude ({claude.explain(exc)}). Used imy's own reply instead."
-    if person.get("use_llm"):
-        try:
-            return index.llm_reply(user_text, history, random.Random(seed))
-        except Exception as exc:
-            print(f"[imy] local LLM failed: {exc}")
-            note = "Couldn't get a reply from the local model (is Ollama running?). Used imy's own reply instead."
-
     reply = local_reply(index, user_text, history, seed)
     if note is None and llm.enabled() and not confident(reply, user_text):
         try:

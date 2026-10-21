@@ -310,7 +310,7 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
   // progress is measured in THEIR messages: one uploaded conversation usually covers it, screenshots add a few each
   const theirs = shots.reduce((n, s) => n + s.messages.filter((m) => m.speaker === "person").length, 0);
 
-  // No limit on how many screenshots: they join one queue and are read one at a time (OCR is slow),
+  // No limit on how many screenshots: they join one queue and are read one at a time (the AI takes a few seconds each),
   // so you can keep dropping more while earlier ones are still being read.
   const pending = useRef([]);
   const running = useRef(false);
@@ -377,7 +377,10 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
       <ExportImport pid={pid} personName={personName} onImported={onImported} />
 
       <h3 className="sub-head">No file? Use screenshots</h3>
-      <p className="muted small">For chats that aren’t in the download, like newer encrypted Messenger chats or Viber, or a few favorite moments.</p>
+      <p className="muted small">
+        For chats that aren’t in the download, like newer encrypted Messenger chats or Viber, or a few favorite moments.
+        Screenshots are sent to our AI (Groq) to read the messages, so crop out passwords or account numbers first.
+      </p>
       <div className={"drop" + (drag ? " over" : "")}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
@@ -422,7 +425,7 @@ export function Upload({ pid, shots, onAdded, onImported, personName, footer }) 
       <details className="paste">
         <summary>Or paste chat text instead</summary>
         <p className="muted small">
-          Text is more accurate than OCR and keeps emojis, which screenshots can’t capture. Use one message per line like
+          Text is exact and keeps every emoji. Use one message per line like
           <code> Name: message</code>, or paste a WhatsApp export.
         </p>
         <label className="field">

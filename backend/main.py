@@ -10,11 +10,12 @@ as a friendly message instead of taking the page down.
 """
 import hashlib
 import html
+import io
 import json
+import mimetypes
 import os
 import random
 import re
-import shutil
 import threading
 import time
 import traceback
@@ -25,17 +26,18 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from . import account_export, auth, backup, claude, engine, importers, insights, llm, looks, mailer, media as media_mod, notes, ocr, parser, style as style_mod, usage
+from . import config  # noqa: F401  (loads .env before anything reads a setting)
+from . import account_export, auth, backup, engine, importers, insights, llm, looks, mailer, media as media_mod, notes, parser, storage, style as style_mod, usage
 from . import feedback as feedback_mod
 from . import sensitive
-from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, init_db, now
+from .db import DATA_DIR, UPLOAD_DIR, bump_version, db, db_kind, init_db, now
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIST = ROOT / "frontend" / "dist"
@@ -225,7 +227,7 @@ def health():
 @app.get("/api/status")
 def status():
     """Which brain is on (no keys are ever shown)."""
-    return {"ai": llm.status(), "claude": claude.enabled(), "matcher": engine.VectorSpace.kind_now(),
+    return {"ai": llm.status(), "matcher": engine.VectorSpace.kind_now(), "files": storage.kind(), "database": db_kind(),
             "contact": contact_email()}      # the site's public contact address (IMY_CONTACT_EMAIL), shown in the app
 
 
@@ -312,9 +314,7 @@ def wipe_account(user_id: int) -> list[int]:
     `python -m backend.admin remove`. Returns the ids of the people removed."""
     with db() as conn:
         pids = [r["id"] for r in conn.execute("SELECT id FROM persons WHERE user_id = ?", (user_id,))]
-        paths = [r["stored_path"] for r in conn.execute(
-            "SELECT s.stored_path FROM screenshots s JOIN persons p ON p.id = s.person_id "
-            "WHERE p.user_id = ? AND s.stored_path IS NOT NULL", (user_id,))]
+        paths = _stored_files(conn, "p.user_id = ?", (user_id,))
         # Deleted by hand rather than left to the database's cascade: "delete everything" has to
         # mean everything, so nothing depends on a foreign key behaving as expected.
         for pid in pids:
@@ -329,12 +329,24 @@ def wipe_account(user_id: int) -> list[int]:
         feedback_mod.forget_user(conn, user_id)
         insights.forget_user(conn, user_id)
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    for p in paths:
-        (UPLOAD_DIR / p).unlink(missing_ok=True)
+    storage.delete(paths)
     for pid in pids:
-        shutil.rmtree(UPLOAD_DIR / str(pid), ignore_errors=True)
+        storage.delete_folder(str(pid))
         engine.forget(pid)
     return pids
+
+
+def _stored_files(conn, where: str, args: tuple) -> list[str]:
+    """Every uploaded file of the people matching `where` (on persons p): screenshots, shared photos
+    and profile pictures. Collected before their rows are deleted, so the files go too - including
+    ones that came from a merged profile and so sit under another person's folder."""
+    out = [r[0] for r in conn.execute(f"SELECT s.stored_path FROM screenshots s JOIN persons p ON p.id = s.person_id "
+                                      f"WHERE {where} AND s.stored_path IS NOT NULL", args)]
+    out += [r[0] for r in conn.execute(f"SELECT m.stored_path FROM media m JOIN persons p ON p.id = m.person_id "
+                                       f"WHERE {where}", args)]
+    for r in conn.execute(f"SELECT p.avatar, p.my_avatar FROM persons p WHERE {where}", args):
+        out += [x for x in (r[0], r[1]) if x]
+    return out
 
 
 class DeleteAccountIn(BaseModel):
@@ -367,7 +379,7 @@ class AiChoiceIn(BaseModel):
 @app.put("/api/auth/ai")
 def choose_cloud_ai(body: AiChoiceIn):
     """The account's switch for the outside AI. Off means no chat, photo or note from this account is
-    sent to Groq, Gemini or Claude: replies come from imy's own reading of the messages (auth.cloud_ai_allowed)."""
+    sent to Groq: replies come from imy's own reading of the messages (auth.cloud_ai_allowed)."""
     me = auth.current()
     auth.set_cloud_ai(me["id"], body.cloud_ai)
     return {"cloud_ai": body.cloud_ai}
@@ -446,7 +458,7 @@ def forgot_password(body: ForgotIn, request: Request = None):
         # Said to everyone alike (it depends on the site, not the account), so it gives nothing away.
         who = contact_email()
         print("[imy] someone asked for a password reset, but email isn't set up "
-              "(IMY_SMTP_HOST and IMY_PUBLIC_URL; see backend/mailer.py)", flush=True)
+              "(RESEND_API_KEY and IMY_PUBLIC_URL; see backend/mailer.py)", flush=True)
         raise HTTPException(503, "imy can't send email yet, so passwords can't be reset here. "
                                  + (f"Write to {who} for help." if who else "Please try again later."))
     found = auth.start_reset(email)
@@ -710,18 +722,6 @@ def update_person(pid: int, body: AnswersIn):
         return _person_summary(conn, _person_row(conn, pid))
 
 
-class SettingsIn(BaseModel):
-    use_llm: bool
-
-
-@app.put("/api/persons/{pid}/settings")
-def update_settings(pid: int, body: SettingsIn):
-    with db() as conn:
-        _person_row(conn, pid)
-        conn.execute("UPDATE persons SET use_llm = ? WHERE id = ?", (int(body.use_llm), pid))
-        return _person_summary(conn, _person_row(conn, pid))
-
-
 class LookIn(BaseModel):
     platform: str | None = None     # the app the chat looks like ("" = imy's own look)
     mode: str | None = None         # "auto" (like the screenshots), "light" or "dark"
@@ -766,18 +766,18 @@ def set_avatar(pid: int, file: UploadFile = File(...), who: str = "person", requ
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, f"That photo is too big (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB).")
     try:
-        saved = media_mod.save(UPLOAD_DIR / str(pid) / "avatar", file.filename or "photo.jpg", data, avatar=True)
+        saved = media_mod.save(f"{pid}/avatar", file.filename or "photo.jpg", data, avatar=True)
     except media_mod.MediaError as exc:
         raise HTTPException(400, str(exc))
     column = "my_avatar" if who == "me" else "avatar"
     with db() as conn:
         name = _person_dict(_person_row(conn, pid))["name"]
         conn.execute(f"UPDATE persons SET {column} = ?, updated_at = ? WHERE id = ?",
-                     (f"{pid}/avatar/{saved['name']}", now(), pid))
+                     (saved["path"], now(), pid))
         _event(conn, pid, "You changed your photo." if who == "me" else f"You changed {name}'s photo.")
         out = _person_summary(conn, _person_row(conn, pid))
     if old:
-        (UPLOAD_DIR / old).unlink(missing_ok=True)
+        storage.delete([old])
     return out
 
 
@@ -792,7 +792,7 @@ def clear_avatar(pid: int, who: str = "person"):
         conn.execute(f"UPDATE persons SET {column} = NULL WHERE id = ?", (pid,))
         out = _person_summary(conn, _person_row(conn, pid))
     if old:
-        (UPLOAD_DIR / old).unlink(missing_ok=True)
+        storage.delete([old])
     return out
 
 
@@ -841,29 +841,32 @@ def update_profile(pid: int, body: ProfileIn):
 def delete_person(pid: int):
     with db() as conn:
         _person_row(conn, pid)
-        paths = [r["stored_path"] for r in conn.execute(
-            "SELECT stored_path FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL", (pid,))]
+        paths = _stored_files(conn, "p.id = ?", (pid,))
         conn.execute("DELETE FROM persons WHERE id = ?", (pid,))
-    for p in paths:   # includes images that came from a merged profile's folder
-        (UPLOAD_DIR / p).unlink(missing_ok=True)
-    shutil.rmtree(UPLOAD_DIR / str(pid), ignore_errors=True)
+    storage.delete(paths)   # includes images that came from a merged profile's folder
+    storage.delete_folder(str(pid))
     engine.forget(pid)
     return {"ok": True}
 
 
 # ---------------------------------------------------------------- screenshots
 def _read_image(img, names: list[str]) -> dict:
-    """Who-said-what for one screenshot: Claude if switched on, else the local screen-aware reader."""
-    if claude.enabled():
-        try:
-            return claude.parse_screenshot(img, names)
-        except Exception as exc:  # fall back to local OCR
-            print(f"[imy] Claude couldn't read a screenshot: {claude.explain(exc)}")
+    """Who-said-what for one screenshot, read by Groq's image model (llm.read_screenshot).
+    Without the AI there is no way to read a picture, so the person is told what to do instead."""
+    if not llm.enabled():
+        if llm.providers():   # set up, but this account switched the outside AI off
+            raise HTTPException(503, "Reading screenshots uses the AI, which you've turned off for your account. "
+                                     "Upload the chat file or paste the text instead, or turn the AI back on in Account.")
+        raise HTTPException(503, "Reading screenshots needs the AI, which isn't set up yet (GROQ_API_KEY). "
+                                 "Upload the chat file or paste the text instead.")
     try:
-        screen = ocr.read_screen(img, names)
-    except ocr.TesseractNotFoundError:
-        raise HTTPException(503, "Tesseract OCR isn't installed or isn't on your PATH. See the README (step 1).")
-    return parser.parse_screen(screen, names)
+        return llm.read_screenshot(img, names)
+    except llm.OverLimit as exc:
+        raise HTTPException(429, f"Can't read screenshots right now: {exc}. Upload the chat file or paste the text instead.")
+    except llm.LLMError as exc:
+        print(f"[imy] couldn't read a screenshot: {exc}")
+        raise HTTPException(503, f"Couldn't read this screenshot ({llm.explain(exc)}). Try again in a minute, "
+                                 "or upload the chat file instead.")
 
 
 def _other_shot_messages(conn, pid: int, except_id: int | None = None) -> list[list[dict]]:
@@ -873,25 +876,12 @@ def _other_shot_messages(conn, pid: int, except_id: int | None = None) -> list[l
                                            (r["id"],))] for r in rows]
 
 
-def _file_hash(path: Path) -> str:
-    h = hashlib.sha1()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _save_upload(f: UploadFile, dest: Path, limit: int) -> None:
-    """Copy an upload to disk, refusing files over `limit` bytes without reading them all into memory."""
-    size = 0
-    with dest.open("wb") as out:
-        while chunk := f.file.read(1 << 20):
-            size += len(chunk)
-            if size > limit:
-                out.close()
-                dest.unlink(missing_ok=True)
-                raise HTTPException(413, f"{f.filename}: the file is too big (max {limit // (1024 * 1024)} MB).")
-            out.write(chunk)
+def _read_upload(f: UploadFile, limit: int) -> bytes:
+    """An upload's bytes, refusing files over `limit` without reading more than that."""
+    data = f.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, f"{f.filename}: the file is too big (max {limit // (1024 * 1024)} MB).")
+    return data
 
 
 def _find_twin(conn, pid: int, digest: str):
@@ -901,9 +891,9 @@ def _find_twin(conn, pid: int, digest: str):
         return row
     for r in conn.execute("SELECT id, stored_path FROM screenshots WHERE person_id = ? AND stored_path IS NOT NULL "
                           "AND sha1 IS NULL", (pid,)).fetchall():
-        path = UPLOAD_DIR / r["stored_path"]
-        if path.exists():
-            conn.execute("UPDATE screenshots SET sha1 = ? WHERE id = ?", (_file_hash(path), r["id"]))
+        data = storage.get(r["stored_path"])
+        if data is not None:
+            conn.execute("UPDATE screenshots SET sha1 = ? WHERE id = ?", (hashlib.sha1(data).hexdigest(), r["id"]))
     return conn.execute("SELECT * FROM screenshots WHERE person_id = ? AND sha1 = ?", (pid, digest)).fetchone()
 
 
@@ -939,42 +929,41 @@ def _process_image(pid: int, f: UploadFile) -> dict:
     with db() as conn:
         person = _person_dict(_person_row(conn, pid))
     names = _known_names(person["answers"])
-    folder = UPLOAD_DIR / str(pid)
-    folder.mkdir(parents=True, exist_ok=True)
-    dest = folder / f"{uuid.uuid4().hex}{ext}"
-    _save_upload(f, dest, MAX_IMAGE_BYTES)
-    digest = _file_hash(dest)
+    data = _read_upload(f, MAX_IMAGE_BYTES)          # kept in memory: nothing is written to the server's disk
+    digest = hashlib.sha1(data).hexdigest()
     with db() as conn:
         twin = _find_twin(conn, pid, digest)
         if twin:
-            dest.unlink(missing_ok=True)
             shot = _shot_out(conn, twin)
             shot.update(duplicate=True, needs_review=False)
             return shot
     try:
-        img = Image.open(dest)
+        img = Image.open(io.BytesIO(data))
         img.load()
     except Exception:
-        dest.unlink(missing_ok=True)
         raise HTTPException(400, f"{f.filename}: couldn't read this image.")
     try:
-        parsed = _read_image(img, names)        # slow (OCR): done outside any database transaction
+        parsed = _read_image(img, names)        # slow (the AI reads it): done outside any database transaction
     except HTTPException:
-        dest.unlink(missing_ok=True)
         raise
     except Exception:
-        dest.unlink(missing_ok=True)
         print(f"[imy] couldn't read {f.filename}:\n{traceback.format_exc()}")
         raise HTTPException(422, f"{f.filename}: imy couldn't read this screenshot. Try a clearer, uncropped one.")
     meta = parsed.get("meta") or {"platform": parsed["platform"]}
     found, raw_text = _hide_in_reading(parsed, meta)
+    stored = f"{pid}/{uuid.uuid4().hex}{ext}"
+    try:
+        storage.put(stored, data)
+    except storage.StorageError as exc:
+        print(f"[imy] couldn't store {f.filename}: {exc}")
+        raise HTTPException(503, f"{f.filename}: couldn't save the screenshot right now. Please try again.")
     with db() as conn:
         # Screenshots taken while scrolling overlap: skip messages another screenshot already has.
         msgs, skipped = parser.trim_overlap(found, _other_shot_messages(conn, pid))
         cur = conn.execute(
             "INSERT INTO screenshots (person_id, filename, stored_path, platform, raw_text, created_at, meta, sha1) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (pid, f.filename, f"{pid}/{dest.name}", parsed["platform"], raw_text, now(), json.dumps(meta), digest))
+            (pid, f.filename, stored, parsed["platform"], raw_text, now(), json.dumps(meta), digest))
         _store_messages(conn, pid, cur.lastrowid, msgs)
         bump_version(conn, pid)
         shot = _shot_out(conn, conn.execute("SELECT * FROM screenshots WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -1009,11 +998,11 @@ def reread_screenshot(sid: int):
         if not shot["stored_path"]:
             raise HTTPException(404, "Screenshot not found")
         person = _person_dict(_person_row(conn, shot["person_id"]))
-    path = UPLOAD_DIR / shot["stored_path"]
-    if not path.exists():
+    data = storage.get(shot["stored_path"])
+    if data is None:
         raise HTTPException(410, "The image file is missing. Remove this item and upload it again.")
     names = _known_names(person["answers"])
-    parsed = _read_image(Image.open(path), names)
+    parsed = _read_image(Image.open(io.BytesIO(data)), names)
     meta = parsed.get("meta") or {"platform": parsed["platform"]}
     found, raw_text = _hide_in_reading(parsed, meta)
     with db() as conn:
@@ -1224,7 +1213,7 @@ def delete_screenshot(sid: int):
         conn.execute("DELETE FROM screenshots WHERE id = ?", (sid,))
         bump_version(conn, shot["person_id"])
     if shot["stored_path"]:
-        (UPLOAD_DIR / shot["stored_path"]).unlink(missing_ok=True)
+        storage.delete([shot["stored_path"]])
     return {"ok": True}
 
 
@@ -1294,18 +1283,21 @@ def upload_media(pid: int, files: list[UploadFile] = File(...), request: Request
             out.append({"filename": f.filename, "error": f"too big (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)"})
             continue
         try:
-            saved = media_mod.save(UPLOAD_DIR / str(pid) / "media", f.filename or "photo.jpg", data)
+            saved = media_mod.save(f"{pid}/media", f.filename or "photo.jpg", data)
         except media_mod.MediaError as exc:
             out.append({"filename": f.filename, "error": str(exc)})
             continue
-        path = UPLOAD_DIR / str(pid) / "media" / saved["name"]
-        desc = media_mod.describe(path, saved["kind"], saved["filename"])   # slow: done before any database lock
+        except storage.StorageError as exc:
+            print(f"[imy] couldn't store a shared file: {exc}")
+            out.append({"filename": f.filename, "error": "couldn't be saved right now, please try again"})
+            continue
+        desc = media_mod.describe(saved["data"], saved["kind"], saved["filename"])   # slow: done before any database lock
         desc = sensitive.mask(desc or "")[0] or desc   # a photo of a card or an ID: its numbers stay out of the replies
         with db() as conn:
             cur = conn.execute(
                 "INSERT INTO media (person_id, stored_path, filename, kind, mime, bytes, width, height, description, sender, created_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,'user',?)",
-                (pid, f"{pid}/media/{saved['name']}", saved["filename"], saved["kind"], saved["mime"],
+                (pid, saved["path"], saved["filename"], saved["kind"], saved["mime"],
                  saved["bytes"], saved["width"], saved["height"], desc, now()))
             out.append(_media_out(conn.execute("SELECT * FROM media WHERE id = ?", (cur.lastrowid,)).fetchone()))
     if len(files) == 1 and out and out[0].get("error"):
@@ -1315,21 +1307,26 @@ def upload_media(pid: int, files: list[UploadFile] = File(...), request: Request
 
 @app.get("/uploads/{path:path}")
 def serve_upload(path: str):
-    """Screenshots, profile pictures and shared photos.
+    """Screenshots, profile pictures and shared photos (kept in Supabase Storage, see storage.py).
 
-    These used to be handed to anyone who knew the address. Every uploaded file is stored under the
-    id of the person it belongs to, so the first part of the path says who owns it - and you only
-    get the file if that person is yours. `resolve()` is what stops a path like `../../` from
-    reaching out of the uploads folder."""
-    base = UPLOAD_DIR.resolve()
-    target = (base / path).resolve()
+    Every uploaded file is stored under the id of the person it belongs to, so the first part of the
+    path says who owns it - and you only get the file if that person is yours. The bucket itself is
+    private, so this is the only way to see a picture. storage.get refuses ".." in a path."""
     owner = path.split("/")[0] if path else ""
-    if not owner.isdigit() or base not in target.parents or not target.is_file():
+    if not owner.isdigit():
         raise HTTPException(404, "Not found")
     with db() as conn:
         _person_row(conn, int(owner))      # 404s unless this person belongs to you
+    try:
+        data = storage.get(path)
+    except storage.StorageError as exc:
+        print(f"[imy] couldn't fetch {path}: {exc}")
+        raise HTTPException(503, "Couldn't load this picture right now.")
+    if data is None:
+        raise HTTPException(404, "Not found")
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # "private" so only this browser caches it, never a shared cache along the way.
-    return FileResponse(target, headers={"Cache-Control": "private, max-age=86400"})
+    return Response(data, media_type=mime, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/api/persons/{pid}/media")
@@ -1528,8 +1525,7 @@ def clear_chat(pid: int, media: bool = False):
         if media:
             conn.execute("DELETE FROM media WHERE person_id = ?", (pid,))
         conn.execute("UPDATE persons SET memory = '' WHERE id = ?", (pid,))
-    for p in paths:
-        (UPLOAD_DIR / p).unlink(missing_ok=True)
+    storage.delete(paths)
     return {"ok": True}
 
 
@@ -1759,7 +1755,7 @@ def admin_link(body: AdminLinkIn, request: Request = None):
     site = mailer.site_url(request)
     local = mailer.is_local(site)
     if not site or not (mailer.configured() or local):
-        raise HTTPException(503, "imy can't send email yet, so the admin link can't be sent. Set IMY_SMTP_HOST and "
+        raise HTTPException(503, "imy can't send email yet, so the admin link can't be sent. Set RESEND_API_KEY and "
                                  "IMY_PUBLIC_URL (see backend/mailer.py).")
     token = insights.start_admin_link(email)
     if not token and local:

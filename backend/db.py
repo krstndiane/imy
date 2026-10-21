@@ -1,4 +1,8 @@
-"""db.py - SQLite storage.
+"""db.py - the database: Turso on a live site, a local SQLite file otherwise.
+
+With IMY_TURSO_URL and IMY_TURSO_TOKEN set (see turso.py and .env.example) every query goes to Turso,
+a hosted copy of SQLite, so the server itself keeps nothing and can be replaced or moved freely.
+Without them (your own computer, tests) it's the file data/imy.db, exactly as before.
 
 Nine tables for the app itself (ai_usage counts AI use per account per day - see usage.py), and
 a few more for the admin page (see insights.py and feedback.py): admin_links / admin_sessions (how
@@ -14,9 +18,8 @@ visit_seen / visit_salt (cookieless visitor counts) and feedback (what people se
   chat_messages the live conversation history in Chat Mode
   media         photos and files shared inside a chat (what they are is saved too, for the AI)
 
-Everything lives in this one file on disk (data/imy.db), so closing the browser or restarting the
-server loses nothing: profile pictures, nicknames, every message and every shared photo are still
-there when you come back.
+Closing the browser or restarting the server loses nothing: nicknames, every message and every
+shared photo (stored in Supabase, see storage.py) are still there when you come back.
 
 `persons.data_version` goes up every time the person's training data changes.
 The engine uses it to know when its cached index is stale.
@@ -24,9 +27,13 @@ The engine uses it to know when its cached index is stale.
 import os
 import sqlite3
 import threading
+
+from . import turso
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+from . import config  # noqa: F401  (loads .env, so IMY_DATA_DIR and the Turso settings are seen)
 
 DATA_DIR = Path(os.environ.get("IMY_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "imy.db"
@@ -221,11 +228,23 @@ MIGRATIONS = [
 ]
 
 
+def _turso() -> tuple[str, str] | None:
+    url = os.environ.get("IMY_TURSO_URL") or os.environ.get("TURSO_DATABASE_URL") or ""
+    token = os.environ.get("IMY_TURSO_TOKEN") or os.environ.get("TURSO_AUTH_TOKEN") or ""
+    return (url, token) if url and token else None
+
+
+def db_kind() -> str:
+    """"turso" or "sqlite", for the status page and preflight."""
+    return "turso" if _turso() else "sqlite"
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with db() as conn:
-        conn.execute("PRAGMA journal_mode = WAL")   # readers never wait for a writer (and vice versa)
+        if db_kind() == "sqlite":
+            conn.execute("PRAGMA journal_mode = WAL")   # readers never wait for a writer (and vice versa)
         conn.executescript(SCHEMA)
         for table, column, decl in MIGRATIONS:
             if column not in [c["name"] for c in conn.execute(f"PRAGMA table_info({table})")]:
@@ -251,12 +270,8 @@ _write_lock = threading.RLock()
 _WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP")
 
 
-class _Connection(sqlite3.Connection):
-    """A connection that joins the write queue the moment it actually writes something."""
-
-    def __init__(self, *a, **k):
-        super().__init__(*a, **k)
-        self._queued = False
+class _Queued:
+    """Joins the write queue the moment the connection actually writes something."""
 
     def _queue_if_writing(self, sql: str) -> None:
         if self._queued:
@@ -284,10 +299,41 @@ class _Connection(sqlite3.Connection):
         return super().executescript(sql)
 
 
+class _Connection(_Queued, sqlite3.Connection):
+    """The local SQLite file."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._queued = False
+
+
+class _TursoConnection(_Queued, turso.Connection):
+    """Turso. Writes still queue up inside this copy of imy, so they don't trip over each other."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._queued = False
+
+
 @contextmanager
 def db():
     """Open a connection, commit on success, roll back on error."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    remote = _turso()
+    if remote:
+        conn = _TursoConnection(*remote)
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            try:
+                conn.close()
+            finally:
+                conn._done_writing()
+        return
     # timeout: when another program is writing, wait for it (up to 30 s) instead of failing with
     # "database is locked", which used to show up as a crash when uploads and chat overlapped.
     conn = sqlite3.connect(DB_PATH, timeout=30, factory=_Connection)

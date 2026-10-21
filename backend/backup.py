@@ -11,6 +11,11 @@
 Each backup is one zip in `data/backups/`: the database plus every uploaded file (screenshots,
 profile pictures, shared photos).
 
+On a live site the database is on Turso and the pictures are in Supabase (see db.py, storage.py).
+Then the backup copies the whole Turso database down into an ordinary SQLite file, so a backup is
+the same kind of zip either way. The pictures stay in Supabase, which keeps them itself; they aren't
+downloaded every day. (Turso also keeps its own point-in-time history of the database.)
+
 Why not just copy the .db file? Because imy may be writing to it at that moment, and a half-copied
 database is worse than none. SQLite has a proper way to do this - `Connection.backup` - which takes
 a consistent snapshot while the site keeps running. That's what this uses.
@@ -39,6 +44,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import db as _db, storage
 from .db import DATA_DIR, DB_PATH, UPLOAD_DIR
 
 BACKUP_DIR = Path(os.environ.get("IMY_BACKUP_DIR", DATA_DIR / "backups"))
@@ -46,8 +52,38 @@ KEEP = int(os.environ.get("IMY_BACKUP_KEEP", "7"))
 EVERY_SECONDS = 24 * 60 * 60
 
 
+def _snapshot_turso(to: Path) -> None:
+    """Copy the Turso database into a local SQLite file: tables, rows, then indexes. Read inside one
+    transaction, so it's a consistent snapshot even while people are using the site."""
+    dest = sqlite3.connect(to)
+    try:
+        with _db.db() as conn:
+            conn.execute("BEGIN")       # a read transaction: every table is read from the same moment
+            objs = [dict(r) for r in conn.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")]
+            for o in objs:
+                if o["type"] == "table":
+                    dest.execute(o["sql"])
+            for o in objs:
+                if o["type"] != "table":
+                    continue
+                rows = conn.execute(f'SELECT * FROM "{o["name"]}"').fetchall()
+                if rows:
+                    cols = ", ".join(f'"{c}"' for c in rows[0].keys())
+                    marks = ", ".join("?" * len(rows[0]))
+                    dest.executemany(f'INSERT INTO "{o["name"]}" ({cols}) VALUES ({marks})', [tuple(r) for r in rows])
+            for o in objs:
+                if o["type"] != "table":
+                    dest.execute(o["sql"])
+        dest.commit()
+    finally:
+        dest.close()
+
+
 def _snapshot(to: Path) -> None:
     """A consistent copy of the database, even while imy is using it."""
+    if _db.db_kind() == "turso":
+        return _snapshot_turso(to)
     src = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
     dest = sqlite3.connect(to)
     try:
@@ -59,7 +95,7 @@ def _snapshot(to: Path) -> None:
 
 def run(keep: int = KEEP, include_uploads: bool = True) -> dict:
     """Make one backup and tidy up old ones. Returns what it did."""
-    if not DB_PATH.exists():
+    if _db.db_kind() == "sqlite" and not DB_PATH.exists():
         return {"ok": False, "error": "There's no database to back up yet."}
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -77,7 +113,7 @@ def run(keep: int = KEEP, include_uploads: bool = True) -> dict:
         part = out.with_suffix(".zip.part")
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
             z.write(tmp_db, "imy.db")
-            if include_uploads and UPLOAD_DIR.exists():
+            if include_uploads and storage.kind() == "local" and UPLOAD_DIR.exists():   # Supabase keeps its own
                 for f in sorted(UPLOAD_DIR.rglob("*")):
                     if f.is_file():
                         z.write(f, str(Path("uploads") / f.relative_to(UPLOAD_DIR)))

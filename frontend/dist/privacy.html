@@ -86,7 +86,9 @@
     <div class="card">
       <p><strong>The short version.</strong> Your chats, photos and memory notes are only visible to your
       account. When imy writes a reply, the recent messages and any photo you share are sent to our AI provider
-      (Groq) to produce it. We don't share them with anyone else, and deleting your account removes them from imy.
+      (Groq) to produce it, and screenshots you upload are sent to Groq to read the messages in them. Apart from the
+      few services that run imy (listed below), we don't share them with anyone, and deleting your account removes
+      them from imy.
       imy is for people aged 18 and over.</p>
     </div>
 
@@ -95,7 +97,8 @@
     "Getting in touch" at the bottom of this page.</p>
 
     <h2>What imy stores</h2>
-    <p>When you use imy, this is kept on the server:</p>
+    <p>When you use imy, this is kept by imy. The database is hosted by Turso and uploaded pictures by Supabase
+    (see "Who can see it"):</p>
     <ul>
       <li><strong>Your account:</strong> your email address and a scrambled version of your password. The password
         itself is never stored, so nobody — including whoever runs imy — can read it.</li>
@@ -141,11 +144,12 @@
       <li><strong>Private details are hidden before anything is saved.</strong> imy looks for passwords, one-time codes
         and PINs, card numbers, bank and e-wallet account numbers, government ID numbers, usernames, API keys, phone
         numbers and email addresses, and replaces each with a marker like <code>[password hidden]</code>. This covers
-        everything you add: uploads, pasted text, edits, and what you type in a chat. What's hidden is never learned,
-        repeated or sent to the AI service.</li>
-      <li><strong>Screenshots are the exception.</strong> The text read from a screenshot is cleaned, but the picture
-        itself is kept as you uploaded it. Review marks the screenshots that still show a hidden detail, so you can
-        remove them.</li>
+        everything you add: uploads, pasted text, edits, and what you type in a chat. What's hidden is never learned
+        or repeated, and isn't sent to the AI service afterwards.</li>
+      <li><strong>Screenshots are the exception.</strong> To read a screenshot, the picture itself is sent to Groq
+        first, so Groq sees whatever it shows. The text imy keeps from it is then cleaned, but the picture is stored
+        as you uploaded it. Review marks the screenshots that still show a hidden detail, so you can remove them.
+        Crop or skip screenshots with passwords or account numbers in them.</li>
     </ul>
     <p>Hiding is automatic pattern matching, so it can miss something or hide a harmless word. Please check Review and
     remove anything else private before you start chatting.</p>
@@ -171,32 +175,43 @@
     each one's email address, when it joined, when it was last active, how many people it has set up and on how
     many days it was used — numbers only — and a map of the time zones people use imy from. It never shows the names of the people you set up, your messages, your
     screenshots or your photos. It also shows the feedback you choose to send.</p>
-    <p>Whoever runs imy can technically reach the server, its database and its backups, as with any website. Your
-    data is not sold, not used for advertising, and not shared with anyone apart from the AI provider below and the
-    email service that delivers password-reset emails (which sees your email address and those emails, and
-    nothing else).</p>
+    <p>Whoever runs imy can technically reach its server, database, file storage and backups, as with any website.
+    Your data is not sold and not used for advertising. imy runs on a few outside services, each holding only what
+    its job needs:</p>
+    <ul>
+      <li><strong>Groq</strong> (the AI, see below): the messages and pictures sent to it for a reply, a photo
+        description or reading a screenshot.</li>
+      <li><strong>Turso</strong> (the database): your account, the people you set up, and every message.</li>
+      <li><strong>Supabase</strong> (file storage): screenshots, profile pictures and photos you share. The storage
+        is private; pictures are only shown through imy, and only to your account.</li>
+      <li><strong>Resend</strong> (email): your email address and the emails imy sends you, like password-reset
+        links.</li>
+    </ul>
+    <p>These services may store or process data outside the Philippines.</p>
 
     <h2>The AI that writes the replies</h2>
-    <p>imy can answer on its own from patterns in the messages you uploaded. When a reply needs real
-    understanding, it asks an outside AI service — <a href="https://groq.com" rel="noreferrer">Groq</a>, and
-    optionally Google's Gemini if that's been set up. What gets sent is only what's needed for that one reply:</p>
+    <p>Replies are written by an outside AI service, <a href="https://groq.com" rel="noreferrer">Groq</a>, in the
+    person's style. If Groq is busy or unavailable, imy writes the reply itself from patterns in the messages you
+    uploaded. What gets sent is only what's needed for that one job:</p>
     <ul>
       <li>a description of how the person writes, and a sample of their real messages;</li>
       <li>the last few messages of your conversation;</li>
-      <li>a photo you share in a chat, so the reply can be about the photo.</li>
+      <li>a photo you share in a chat, so the reply can be about the photo;</li>
+      <li>a screenshot you upload, so Groq can read the messages in it. The picture is then kept in imy's own file
+        storage, not by Groq.</li>
     </ul>
-    <p>Your email address, your password, your uploaded screenshot <em>images</em> and the private details hidden from
-    your chats are never sent. Groq says
+    <p>Your email address and your password are never sent, and nor are the private details hidden from your chats,
+    except inside a screenshot's picture (see above). Groq says
     that by default it doesn't keep what's sent to it; it may keep it for up to 30 days to investigate errors or
     abuse unless that's switched off, and it processes it in the United States
-    (<a href="https://console.groq.com/docs/your-data" rel="noreferrer">Groq: your data</a>). If Gemini has been
-    switched on by whoever runs this site, Google's terms for the plan in use apply.</p>
+    (<a href="https://console.groq.com/docs/your-data" rel="noreferrer">Groq: your data</a>).</p>
     <p>Each account can use the AI a set number of times a day. After that, replies are written by imy itself from
     the messages you uploaded, without sending anything out.</p>
 
     <p>You can switch the outside AI off for your whole account at any time: account menu → turn off "Let an outside
     AI help write replies". After that nothing you write or share is sent out. Replies are written by imy itself from
-    the messages you uploaded, and photos you share are no longer described. The switch is on by default, which is why
+    the messages you uploaded, photos you share are no longer described, and screenshots can't be read (upload the
+    chat file or paste the text instead). The switch is on by default, which is why
     the Terms and this page ask you to agree when you sign up.</p>
 
     <h2>Deleting things</h2>
@@ -206,11 +221,11 @@
       <li><strong>One conversation:</strong> the chat menu → Clear chat.</li>
       <li><strong>What they remember:</strong> the chat menu → What they remember → Forget everything.</li>
       <li><strong>Everything:</strong> your account menu → Delete everything. This removes your account, every
-        person, every message, every uploaded file, your feedback and your activity dates from the server. It
-        cannot be undone.</li>
+        person, every message, every uploaded file, your feedback and your activity dates from imy's database and file
+        storage. It cannot be undone.</li>
     </ul>
-    <p>Deleted means deleted — not hidden. Backups made before a deletion may still hold the data until they age
-    out, which takes about a week.</p>
+    <p>Deleted means deleted — not hidden. Backups made before a deletion, and the database host's own short restore
+    history, may still hold the data until they age out, which takes about a week.</p>
 
     <h2>The person you're copying</h2>
     <p>This matters more than anything else on this page. imy learns from conversations involving a real person

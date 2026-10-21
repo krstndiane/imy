@@ -288,14 +288,14 @@ def test_the_app_tells_an_admin_account_where_admin_is(monkeypatch):
 
 
 def test_env_file_is_read_without_python_dotenv(monkeypatch, tmp_path=None):
-    from backend import claude
+    from backend import config
     import pathlib, tempfile
     folder = pathlib.Path(tempfile.mkdtemp())
     (folder / ".env").write_text('# comment\nIMY_T_A=one\nIMY_T_B="two words"\nexport IMY_T_C=three # note\nIMY_T_D=\n')
     for k in ("IMY_T_A", "IMY_T_B", "IMY_T_C", "IMY_T_D"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("IMY_T_A", "from-shell")
-    claude._read_env_file(folder / ".env")
+    config._read_env_file(folder / ".env")
     assert os.environ["IMY_T_A"] == "from-shell"          # the shell wins
     assert os.environ["IMY_T_B"] == "two words" and os.environ["IMY_T_C"] == "three" and os.environ["IMY_T_D"] == ""
 

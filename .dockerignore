@@ -1,8 +1,12 @@
 .venv
 .git
 .env
+.env.*
 data
+_to_delete
 **/__pycache__
+**/.pytest_cache
 **/node_modules
+**/.DS_Store
 frontend/src
 *.zip

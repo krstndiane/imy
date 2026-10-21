@@ -299,8 +299,8 @@ def current_id() -> int | None:
 # ---------------------------------------------------------------- the account's own choices
 def cloud_ai_allowed(user: dict | None = None) -> bool:
     """False once this account has switched off "let an outside AI help write replies" (account menu).
-    Every place that would send a chat to Groq, Gemini or Claude checks this first (llm.enabled,
-    usage.blocked, claude.enabled), so one switch covers them all. Nobody signed in (tests, scripts)
+    Every place that would send a chat or a picture to Groq checks this first (llm.enabled,
+    usage.blocked), so one switch covers them all. Nobody signed in (tests, scripts)
     counts as allowed; the site's own settings (no key, IMY_AI_MODE=off) still apply separately."""
     me = CURRENT.get() if user is None else user
     return True if not me else bool(me.get("cloud_ai", True))

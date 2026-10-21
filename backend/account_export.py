@@ -28,7 +28,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .db import DATA_DIR, UPLOAD_DIR, db, now
+from . import storage
+from .db import DATA_DIR, db, now
 
 ROOT = "imy-my-data"
 # Photos, video and zips are already compressed, so squeezing them again only wastes time.
@@ -77,25 +78,29 @@ def _stamp(iso: str | None) -> str:
 
 
 class _Files:
-    """Adds an uploaded file to the zip, but only if it really lives in this person's own folder."""
+    """Adds an uploaded file to the zip (fetched from storage), but only if it belongs to this person."""
 
     def __init__(self, z: zipfile.ZipFile, person_id: int, folder: str):
         self.z, self.folder, self.missing = z, folder, []
-        self.base = (UPLOAD_DIR / str(person_id)).resolve()
+        self.prefix = f"{person_id}/"
 
     def add(self, stored_path: str | None, where: str, row_id, original_name: str) -> str | None:
         if not stored_path:
             return None
-        target = (UPLOAD_DIR / stored_path).resolve()
-        if self.base not in target.parents or not target.is_file():
+        try:
+            data = storage.get(stored_path) if stored_path.startswith(self.prefix) else None
+        except storage.StorageError:
+            data = None
+        if data is None:
             self.missing.append(stored_path)
             return None
+        suffix = Path(stored_path).suffix
         name = _safe(original_name, "file")
         if not Path(name).suffix:
-            name += target.suffix
+            name += suffix
         arc = f"{self.folder}/files/{where}/{row_id}-{name}"
-        kind = zipfile.ZIP_STORED if target.suffix.lower() in ALREADY_COMPRESSED else zipfile.ZIP_DEFLATED
-        self.z.write(target, arc, compress_type=kind)
+        kind = zipfile.ZIP_STORED if suffix.lower() in ALREADY_COMPRESSED else zipfile.ZIP_DEFLATED
+        self.z.writestr(arc, data, compress_type=kind)
         return arc
 
 
@@ -161,7 +166,6 @@ def _one_person(z: zipfile.ZipFile, conn, p: dict) -> int:
         "chat_theme": _loads(p.get("theme"), {}),
         "interview_answers": _loads(p.get("answers"), {}),
         "memory_notes": p.get("memory") or "",
-        "local_model_switch_on": bool(p.get("use_llm")),
         "added": p.get("created_at"),
         "updated": p.get("updated_at"),
         "confirmed_these_were_their_own_chats_at": p.get("consent_at"),

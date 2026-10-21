@@ -28,7 +28,7 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      IMY_DOMAIN: ${IMY_DOMAIN:?Set IMY_DOMAIN in .env, e.g. IMY_DOMAIN=imy-pdyn.duckdns.org}
+      IMY_DOMAIN: ${IMY_DOMAIN:?Set IMY_DOMAIN in .env, e.g. IMY_DOMAIN=imy.pdyntech.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data           # the certificate; kept so it isn't requested again on every restart

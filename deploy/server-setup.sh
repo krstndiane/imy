@@ -5,10 +5,10 @@
 # Running it again is safe - that's also how updates work. It:
 #   1. installs Docker (first time only)
 #   2. opens ports 80 and 443 in the server's own firewall (Oracle's Ubuntu blocks them)
-#   3. asks for the settings that can't be in git - the address, the Gmail App Password, the Groq
-#      key - and keeps them in ~/imy/.env, readable only by you (first time only)
+#   3. asks for the settings that can't be in git - the address and the Groq, Turso, Supabase and
+#      Resend keys - and keeps them in ~/imy/.env, readable only by you (first time only)
 #   4. builds imy and starts it with Caddy in front for https
-#   5. runs the launch checks against the live address
+#   5. tries each service, then runs the launch checks against the live address
 set -euo pipefail
 cd "$(dirname "$0")/.."
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -39,16 +39,25 @@ sudo netfilter-persistent save >/dev/null 2>&1 || true      # keep the rules aft
 # ---------------------------------------------------------------- 3. settings (first time only)
 if [ ! -f .env ]; then
   say "imy's settings (asked once, kept in ~/imy/.env)"
-  read -rp "The site's address, without https:// (e.g. imy-pdyn.duckdns.org): " domain
+  read -rp "The site's address, without https:// [imy.pdyntech.com]: " domain
+  domain=${domain:-imy.pdyntech.com}
   domain=${domain#https://}; domain=${domain#http://}; domain=${domain%%/*}
-  echo "The Gmail App Password for pdyntechnology@gmail.com (16 letters; typing is hidden):"
-  read -rsp "> " smtp_pw; echo
-  smtp_pw=${smtp_pw// /}
   echo "Who can open /admin? Their email addresses, comma-separated (kept only on this server)."
   read -rp "Admin emails [pdyntechnology@gmail.com]: " admins
   admins=${admins// /}; admins=${admins:-pdyntechnology@gmail.com}
-  echo "Your Groq API key (from console.groq.com/keys; typing is hidden; Enter to skip):"
+  echo "Typing is hidden for the keys below. Press Enter to skip one and add it to ~/imy/.env later."
+  echo "Groq API key (console.groq.com/keys) - needed to read screenshots and write replies:"
   read -rsp "> " groq; echo
+  echo "Turso database URL (turso db show <name> --url, starts with libsql://):"
+  read -rp "> " turso_url
+  echo "Turso token (turso db tokens create <name>):"
+  read -rsp "> " turso_token; echo
+  echo "Supabase Project URL (Project Settings > API, https://....supabase.co):"
+  read -rp "> " supabase_url
+  echo "Supabase service_role key (same page; secret):"
+  read -rsp "> " supabase_key; echo
+  echo "Resend API key (resend.com > API Keys; pdyntech.com must be verified there first):"
+  read -rsp "> " resend; echo
   umask 077
   cat > .env <<ENV
 # imy's live settings. Readable only by this user. Never copy this file into git.
@@ -58,13 +67,18 @@ IMY_CONTACT_EMAIL=pdyntechnology@gmail.com
 # Who can open /admin. Not shown anywhere public. Feedback is emailed to IMY_CONTACT_EMAIL.
 IMY_ADMIN_EMAILS=$admins
 
-IMY_SMTP_HOST=smtp.gmail.com
-IMY_SMTP_PORT=587
-IMY_SMTP_USER=pdyntechnology@gmail.com
-IMY_SMTP_PASSWORD=$smtp_pw
-IMY_MAIL_FROM="imy <pdyntechnology@gmail.com>"
+# Email, through Resend, from pdyntech.com
+RESEND_API_KEY=$resend
+IMY_MAIL_FROM="imy <no-reply@pdyntech.com>"
 
+# The AI (Groq, through Pydantic AI)
 GROQ_API_KEY=$groq
+
+# The database (Turso) and pictures (Supabase): the server itself keeps nothing
+IMY_TURSO_URL=$turso_url
+IMY_TURSO_TOKEN=$turso_token
+SUPABASE_URL=$supabase_url
+SUPABASE_SERVICE_KEY=$supabase_key
 
 TZ=Asia/Manila
 IMY_BACKUP_DAILY=1
@@ -79,7 +93,7 @@ here=$(curl -fsS -4 --max-time 10 https://api.ipify.org || true)
 there=$(getent ahostsv4 "$IMY_DOMAIN" | awk 'NR==1{print $1}' || true)
 if [ -n "$here" ] && [ "$here" != "$there" ]; then
   say "Heads up: $IMY_DOMAIN points to '${there:-nothing}', but this server is $here"
-  echo "Set the IP at duckdns.org to $here, wait a minute, then run this script again."
+  echo "Point $IMY_DOMAIN at $here (an A record in Route 53), wait a minute, then run this script again."
   echo "(Starting anyway; https will start working by itself once the address points here.)"
 fi
 
@@ -98,6 +112,8 @@ for i in $(seq 1 60); do
 done
 
 # ---------------------------------------------------------------- 5. check it from outside
+say "Trying each service with the keys above"
+$DC exec -T imy python -m backend.services || true
 say "Launch checks"
 sleep 5                                                      # give Caddy a moment to get the certificate
 $DC exec -T imy python -m backend.preflight --url "https://$IMY_DOMAIN" || true

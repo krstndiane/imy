@@ -10,7 +10,7 @@ the person's own language decides which are used. "{e}" becomes one of their
 endearments (sometimes). To teach it a new topic, add a rule.
 
 This is pattern matching, not understanding: anything no rule covers gets a neutral
-reply from personality.py. For real conversation, turn on Claude mode (claude.py).
+reply from personality.py. For real conversation, imy asks Groq (llm.py).
 """
 import re
 from datetime import datetime

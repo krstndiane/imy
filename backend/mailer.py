@@ -1,7 +1,14 @@
-"""mailer.py - sending email. imy only sends two kinds: a "forgot password" link, and a short
-notice when a password changes.
+"""mailer.py - sending email: "forgot password" links, password-changed notices, admin sign-in
+links and feedback.
 
-Any email service that offers SMTP works. Set these on the server (or in .env):
+On the live site email goes through Resend (resend.com), from an address on pdyntech.com:
+
+    RESEND_API_KEY      from resend.com > API Keys (Sending access is enough)
+    IMY_MAIL_FROM       imy <no-reply@pdyntech.com>   - the domain must be verified in Resend first
+                        (Resend shows the DNS records; add them in Route 53 for pdyntech.com)
+
+Without RESEND_API_KEY, any email service that offers SMTP works instead (Gmail with an App Password
+is fine for testing). Set these on the server (or in .env):
 
     IMY_SMTP_HOST       smtp.gmail.com, smtp-relay.brevo.com, smtp.resend.com, ...
     IMY_SMTP_PORT       587 (the usual; STARTTLS) or 465 (SSL from the start)
@@ -14,22 +21,28 @@ Any email service that offers SMTP works. Set these on the server (or in .env):
                         Host header would otherwise make imy email a real person a link to someone
                         else's website ("password reset poisoning").
 
-Without IMY_SMTP_HOST nothing is sent. On your own computer (the site address is localhost) the
+Without RESEND_API_KEY or IMY_SMTP_HOST nothing is sent. On your own computer (the site address is localhost) the
 email is printed in the Terminal instead, so you can still click the link while testing. On a live
 site it is NOT printed, because a reset link is as good as the password and host logs are read by
 more people than the person it's for. `python -m backend.preflight` flags a live site without email.
 
 Check your settings by sending yourself a test:   python -m backend.mailer you@example.com
 """
+import base64
 import html
+import json
 import os
 import smtplib
 import ssl
 import sys
 import threading
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from pathlib import Path
+
+from . import config  # noqa: F401  (loads .env, also when run as python -m backend.mailer)
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 # The imy logo, carried inside each email (not loaded from the website), so it shows even when the
@@ -44,8 +57,17 @@ class MailError(Exception):
     """The email service refused or couldn't be reached. The message says which, in plain words."""
 
 
+def resend_key() -> str:
+    return os.environ.get("RESEND_API_KEY", "").strip()
+
+
 def configured() -> bool:
-    return bool(os.environ.get("IMY_SMTP_HOST", "").strip())
+    return bool(resend_key() or os.environ.get("IMY_SMTP_HOST", "").strip())
+
+
+def service() -> str:
+    """"resend", "smtp" or "" - for the status checks."""
+    return "resend" if resend_key() else "smtp" if configured() else ""
 
 
 def sender() -> str:
@@ -92,11 +114,13 @@ def send(to: str, subject: str, text: str, html_body: str | None = None, print_i
     if not configured():
         if print_if_off:
             line = "-" * 68
-            print(f"\n{line}\n[imy] Email isn't set up (IMY_SMTP_HOST), so here is what would have been sent:\n"
+            print(f"\n{line}\n[imy] Email isn't set up (RESEND_API_KEY or IMY_SMTP_HOST), so here is what would have been sent:\n"
                   f"To: {to}\nSubject: {subject}\n\n{text}\n{line}\n", flush=True)
         else:
-            print(f"[imy] couldn't email {mask(to)}: email isn't set up (IMY_SMTP_HOST)", flush=True)
+            print(f"[imy] couldn't email {mask(to)}: email isn't set up (RESEND_API_KEY or IMY_SMTP_HOST)", flush=True)
         return False
+    if resend_key():
+        return _send_resend(to, subject, text, html_body)
 
     host = os.environ["IMY_SMTP_HOST"].strip()
     try:
@@ -136,6 +160,53 @@ def send(to: str, subject: str, text: str, html_body: str | None = None, print_i
     return True
 
 
+RESEND_URL = os.environ.get("IMY_RESEND_URL", "https://api.resend.com")
+
+
+def _inline_images(html_body: str | None) -> list[tuple[str, Path, str]]:
+    """The logos this email shows: (content id, file, file name), only those it actually uses."""
+    out = []
+    for cid, path, name in ((LOGO_CID, LOGO, "imy-logo.png"), (PDYN_CID, PDYN, "pdyn-technologies.png")):
+        if html_body and f"cid:{cid}" in html_body and path.is_file():
+            out.append((cid, path, name))
+    return out
+
+
+def _send_resend(to: str, subject: str, text: str, html_body: str | None = None) -> bool:
+    """One email through Resend's API, with the logos inside it (inline, like the SMTP version)."""
+    frm = os.environ.get("IMY_MAIL_FROM", "").strip()
+    if not frm:
+        raise MailError("Set IMY_MAIL_FROM to the address emails come from, e.g. imy <no-reply@pdyntech.com>.")
+    body = {"from": frm, "to": [to], "subject": subject, "text": text}
+    if html_body:
+        body["html"] = html_body
+        body["attachments"] = [{"filename": name, "content": base64.b64encode(path.read_bytes()).decode(),
+                                "content_type": "image/png", "content_id": cid}
+                               for cid, path, name in _inline_images(html_body)]
+    contact = os.environ.get("IMY_CONTACT_EMAIL", "").strip()
+    if contact:
+        body["reply_to"] = contact         # so "reply to this email" reaches a person
+    req = urllib.request.Request(f"{RESEND_URL}/emails", data=json.dumps(body).encode(), method="POST", headers={
+        "Authorization": f"Bearer {resend_key()}", "Content-Type": "application/json", "User-Agent": "imy/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            json.load(resp)
+        return True
+    except urllib.error.HTTPError as err:
+        try:
+            detail = json.loads(err.read() or b"{}").get("message") or ""
+        except ValueError:
+            detail = ""
+        if err.code in (401, 403) and "domain" not in detail.lower():
+            raise MailError(f"Resend didn't accept RESEND_API_KEY ({err.code}). {detail}".strip()) from None
+        if "domain" in detail.lower() or "verify" in detail.lower():
+            raise MailError(f"Resend won't send from {frm} yet: {detail} Verify pdyntech.com in Resend (Domains) "
+                            "and add the DNS records it shows in Route 53.") from None
+        raise MailError(f"Resend refused the message ({err.code}): {detail or 'no details'}") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise MailError(f"Couldn't reach Resend ({exc}).") from None
+
+
 def build(frm: str, to: str, subject: str, text: str, html_body: str | None = None) -> EmailMessage:
     """The whole email: a plain-text version (for mail apps that don't show HTML, and for spam
     filters, which trust emails that have one), the designed version, and the logo inside it."""
@@ -152,12 +223,9 @@ def build(frm: str, to: str, subject: str, text: str, html_body: str | None = No
     msg.set_content(text)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
-        if f"cid:{LOGO_CID}" in html_body and LOGO.is_file():
-            msg.get_payload()[1].add_related(LOGO.read_bytes(), "image", "png", cid=f"<{LOGO_CID}>",
-                                             disposition="inline", filename="imy-logo.png")
-        if f"cid:{PDYN_CID}" in html_body and PDYN.is_file():
-            msg.get_payload()[1].add_related(PDYN.read_bytes(), "image", "png", cid=f"<{PDYN_CID}>",
-                                             disposition="inline", filename="pdyn-technologies.png")
+        for cid, path, name in _inline_images(html_body):
+            msg.get_payload()[1].add_related(path.read_bytes(), "image", "png", cid=f"<{cid}>",
+                                             disposition="inline", filename=name)
     return msg
 
 
@@ -345,7 +413,7 @@ if __name__ == "__main__":
         print(__doc__)
         sys.exit(2)
     if not configured():
-        print("Email isn't set up: IMY_SMTP_HOST is empty. See the top of this file.")
+        print("Email isn't set up: RESEND_API_KEY and IMY_SMTP_HOST are both empty. See the top of this file.")
         sys.exit(1)
     try:
         send(sys.argv[1], "imy test email",
@@ -356,6 +424,7 @@ if __name__ == "__main__":
     except MailError as exc:
         print(f"Not sent: {exc}")
         sys.exit(1)
-    print(f"Sent to {sys.argv[1]} from {sender()} via {os.environ['IMY_SMTP_HOST']}. Check the inbox (and spam).")
+    via = "Resend" if service() == "resend" else os.environ["IMY_SMTP_HOST"]
+    print(f"Sent to {sys.argv[1]} from {sender()} via {via}. Check the inbox (and spam).")
     if not site_url():
         print("Also set IMY_PUBLIC_URL to the site's https address, or reset links can't be made on the live site.")
