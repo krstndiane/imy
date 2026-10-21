@@ -253,6 +253,13 @@ def _run(model: str, instructions: str, prompt, history: list[dict] | None = Non
         if exc.status == 400 and "extra_body" in settings:   # this model doesn't take that setting: ask plainly, remember
             _plain.add(model)
             return once({k: v for k, v in settings.items() if k != "extra_body"})
+        # The free tier caps output tokens per minute: "Limit 1000, Requested 1211 ... reduce max_tokens".
+        # The request itself is too big, not the model busy: ask again for a smaller answer.
+        if exc.status in (413, 429) and re.search(r"too large|reduce max_tokens", str(exc), re.I):
+            found = re.search(r"Limit (\d+)", str(exc))
+            smaller = int(int(found.group(1)) * 0.8) if found else max_tokens // 2
+            if 200 <= smaller < settings["max_tokens"]:
+                return once({**settings, "max_tokens": smaller})
         raise
 
 

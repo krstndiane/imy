@@ -20,3 +20,4 @@ _to_delete/
 .DS_Store
 *.log
 *.zip
+.vscode/

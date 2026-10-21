@@ -198,3 +198,15 @@ def test_a_shared_photo_is_described(monkeypatch):
     with fake_pydantic_ai(lambda **k: "  A slice of   chocolate cake\non a plate. ") as calls:
         assert llm.see(Image.new("RGB", (800, 600), (120, 60, 20))) == "A slice of chocolate cake on a plate."
     assert calls[0]["prompt"][0] == llm.SEE_PROMPT
+
+
+def test_a_request_over_the_free_output_limit_is_asked_again_smaller(monkeypatch):
+    groq_on(monkeypatch)
+
+    def answer(settings, **k):
+        if settings["max_tokens"] > 1000:
+            raise FakeHTTPError(429, "Request too large for model: Limit 1000, Requested 1211. reduce max_tokens")
+        return "kain ka na?"
+    with fake_pydantic_ai(answer) as calls:
+        assert llm._run("qwen/qwen3.8-27b", "", "hi", max_tokens=4000) == "kain ka na?"
+    assert [c["settings"]["max_tokens"] for c in calls] == [4000, 800]
